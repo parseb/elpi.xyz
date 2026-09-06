@@ -8,10 +8,15 @@ import {BalanceDelta} from "@uniswap/v4-core/src/types/BalanceDelta.sol";
 import {BeforeSwapDelta, toBeforeSwapDelta} from "@uniswap/v4-core/src/types/BeforeSwapDelta.sol";
 import {SwapParams, ModifyLiquidityParams} from "@uniswap/v4-core/src/types/PoolOperation.sol";
 
-/// @dev Minimal interface for ERC-6551 token-bound accounts.
-///      Used for PositionAccount verification — see _requireKnownPositionAccount().
+/// @title IERC6551Account
+/// @author parseb
+/// @notice Minimal interface for ERC-6551 token-bound accounts.
+///         Used for PositionAccount verification — see _requireKnownPositionAccount().
 interface IERC6551Account {
     /// @notice Returns the chain ID, token contract, and token ID this account is bound to.
+    /// @return chainId The EIP-155 chain ID.
+    /// @return tokenContract The contract address of the parent ERC-721 token.
+    /// @return tokenId The identifier of the parent ERC-721 token.
     function token() external view returns (uint256 chainId, address tokenContract, uint256 tokenId);
 }
 
@@ -45,6 +50,7 @@ interface IERC6551Account {
 contract OptionSettlementHook is IHooks {
     // ─── Netting entry (transient storage) ────────────────────────────────────
 
+    /// @notice Structure storing pending transient settlement flow for internal netting.
     struct NettingEntry {
         address tokenIn;
         address tokenOut;
@@ -115,48 +121,61 @@ contract OptionSettlementHook is IHooks {
     ///         Populated by the owner at deployment; read-only thereafter per-position.
     mapping(address => bool) public knownPositionManagers;
 
+    /// @notice The contract owner / governance address.
     address public immutable owner;
+
+    /// @notice The canonical Uniswap v4 PoolManager contract.
     IPoolManager public immutable poolManager;
 
     /// @notice The UniswapV4VenueAdapter address that is trusted to forward PositionAccount
     ///         addresses via hookData. When sender == trustedAdapter, the hook decodes the
     ///         PositionAccount from the first 32 bytes of hookData and verifies it instead.
-    ///
-    /// @dev    Why this is safe (spec §3.2 intent):
-    ///         In v4, beforeSwap(sender,...) receives the direct caller of poolManager.swap().
-    ///         The adapter calls swap() inside unlockCallback, so sender == adapter, not the
-    ///         PositionAccount. The adapter prepends abi.encode(positionAccount) to hookData.
-    ///         We trust the adapter because:
-    ///           1. The adapter can only be reached via a genuine poolManager.unlock() context
-    ///              (its onlyPoolManager guard verifies this).
-    ///           2. The PositionAccount address encoded is d.recipient from SwapCallbackData,
-    ///              which equals msg.sender of the outer adapter.swap() call. A caller cannot
-    ///              forge a different PositionAccount without controlling tokenIn transfers
-    ///              from that address (safeTransferFrom would fail).
-    ///         The security guarantee is identical to the spec: only contracts bound to a
-    ///         known PositionManager receive the 0-fee waiver.
     address public immutable trustedAdapter;
 
     // ─── Errors & Events ──────────────────────────────────────────────────────
 
+    /// @notice Thrown when caller is not an authorized PositionAccount.
+    /// @param sender The address failing verification.
     error InvalidOptionAccount(address sender);
+
+    /// @notice Thrown when an admin function is called by a non-owner.
     error OnlyOwner();
+
+    /// @notice Thrown when callback is called by an entity other than the PoolManager.
     error OnlyPoolManager();
 
+    /// @notice Thrown when a zero address parameter is supplied where prohibited.
+    error ZeroAddress();
+
     /// @notice Emitted after every settlement swap (informational only, never reverts).
+    /// @param timestamp The block timestamp of execution.
+    /// @param amount0 The balance change of token0.
+    /// @param amount1 The balance change of token1.
     event SwapExecuted(uint256 indexed timestamp, int128 amount0, int128 amount1);
 
     /// @notice Emitted when two opposing flows are netted internally (AMM bypassed).
+    /// @param posA The first position account participating in the cross.
+    /// @param posB The second position account participating in the cross.
+    /// @param asset The token asset netted.
+    /// @param amount The netted amount.
     event NetCross(address indexed posA, address indexed posB, address asset, uint256 amount);
+
+    /// @notice Emitted when a PositionManager is added or removed.
+    /// @param positionManager The position manager contract address.
+    /// @param approved Whether the position manager is approved.
+    event PositionManagerUpdated(address indexed positionManager, bool approved);
 
     // ─── Constructor ──────────────────────────────────────────────────────────
 
+    /// @notice Deploys the OptionSettlementHook.
     /// @param _poolManager   The Uniswap v4 PoolManager.
     /// @param _owner         Hook admin — can add/remove PositionManagers.
     /// @param _trustedAdapter The UniswapV4VenueAdapter address. May be address(0) for
-    ///                        testing or before the adapter is deployed; set to the real
-    ///                        adapter address before any option pool goes live.
+    ///                        testing or before the adapter is deployed.
     constructor(IPoolManager _poolManager, address _owner, address _trustedAdapter) {
+        if (address(_poolManager) == address(0)) revert ZeroAddress();
+        if (_owner == address(0)) revert ZeroAddress();
+
         poolManager = _poolManager;
         owner = _owner;
         trustedAdapter = _trustedAdapter;
@@ -166,27 +185,36 @@ contract OptionSettlementHook is IHooks {
 
     /// @notice Register a PositionManager address as trusted. Its bound accounts
     ///         (ERC-6551 tokens) will pass sender verification and receive the fee waiver.
+    /// @param pm The PositionManager contract address to authorize.
     function addPositionManager(address pm) external {
         if (msg.sender != owner) revert OnlyOwner();
+        if (pm == address(0)) revert ZeroAddress();
         knownPositionManagers[pm] = true;
+        emit PositionManagerUpdated(pm, true);
     }
 
     /// @notice Remove a PositionManager from the trusted set.
+    /// @param pm The PositionManager contract address to revoke.
     function removePositionManager(address pm) external {
         if (msg.sender != owner) revert OnlyOwner();
+        if (pm == address(0)) revert ZeroAddress();
         knownPositionManagers[pm] = false;
+        emit PositionManagerUpdated(pm, false);
     }
 
     // ─── IHooks — stubs for unused hooks (return correct selectors) ───────────
 
+    /// @inheritdoc IHooks
     function beforeInitialize(address, PoolKey calldata, uint160) external pure override returns (bytes4) {
         return IHooks.beforeInitialize.selector;
     }
 
+    /// @inheritdoc IHooks
     function afterInitialize(address, PoolKey calldata, uint160, int24) external pure override returns (bytes4) {
         return IHooks.afterInitialize.selector;
     }
 
+    /// @inheritdoc IHooks
     function beforeAddLiquidity(address, PoolKey calldata, ModifyLiquidityParams calldata, bytes calldata)
         external
         pure
@@ -196,6 +224,7 @@ contract OptionSettlementHook is IHooks {
         return IHooks.beforeAddLiquidity.selector;
     }
 
+    /// @inheritdoc IHooks
     function afterAddLiquidity(
         address,
         PoolKey calldata,
@@ -207,6 +236,7 @@ contract OptionSettlementHook is IHooks {
         return (IHooks.afterAddLiquidity.selector, BalanceDelta.wrap(0));
     }
 
+    /// @inheritdoc IHooks
     function beforeRemoveLiquidity(address, PoolKey calldata, ModifyLiquidityParams calldata, bytes calldata)
         external
         pure
@@ -216,6 +246,7 @@ contract OptionSettlementHook is IHooks {
         return IHooks.beforeRemoveLiquidity.selector;
     }
 
+    /// @inheritdoc IHooks
     function afterRemoveLiquidity(
         address,
         PoolKey calldata,
@@ -227,6 +258,7 @@ contract OptionSettlementHook is IHooks {
         return (IHooks.afterRemoveLiquidity.selector, BalanceDelta.wrap(0));
     }
 
+    /// @inheritdoc IHooks
     function beforeDonate(address, PoolKey calldata, uint256, uint256, bytes calldata)
         external
         pure
@@ -236,6 +268,7 @@ contract OptionSettlementHook is IHooks {
         return IHooks.beforeDonate.selector;
     }
 
+    /// @inheritdoc IHooks
     function afterDonate(address, PoolKey calldata, uint256, uint256, bytes calldata)
         external
         pure
@@ -247,16 +280,17 @@ contract OptionSettlementHook is IHooks {
 
     // ─── beforeSwap ───────────────────────────────────────────────────────────
 
+    /// @inheritdoc IHooks
     /// @notice Called by PoolManager before every swap on this hook's pool.
-    /// @dev    Step 1: Verify the sender is a PositionAccount bound to a known
-    ///                 PositionManager (ERC-6551 token() introspection).
-    ///                 If sender == trustedAdapter, read the PositionAccount from
-    ///                 hookData[0:32] (prepended by the adapter) instead.
-    ///         Step 2: Return overrideFee = 0 (I4: AMM fee waiver for settlement).
-    ///         Step 3: Check transient netting buffer for an opposing flow.
-    ///                 If found: cross at current price, return custom BeforeSwapDelta
-    ///                           that bypasses the AMM curve entirely.
-    ///                 If not found: store this flow in the buffer, proceed normally.
+    /// @dev Step 1: Verify the sender is a PositionAccount bound to a known
+    ///              PositionManager (ERC-6551 token() introspection).
+    ///              If sender == trustedAdapter, read the PositionAccount from
+    ///              hookData[0:32] (prepended by the adapter) instead.
+    ///      Step 2: Return overrideFee = 0 (I4: AMM fee waiver for settlement).
+    ///      Step 3: Check transient netting buffer for an opposing flow.
+    ///              If found: cross at current price, return custom BeforeSwapDelta
+    ///                        that bypasses the AMM curve entirely.
+    ///              If not found: store this flow in the buffer, proceed normally.
     function beforeSwap(address sender, PoolKey calldata, SwapParams calldata params, bytes calldata hookData)
         external
         override
@@ -271,10 +305,6 @@ contract OptionSettlementHook is IHooks {
         uint24 overrideFee = 0;
 
         // ── Step 3: Internal flow netting (EIP-1153 transient storage) ───────
-        // Decode tokenIn/tokenOut from params.amountSpecified sign and hookData.
-        // hookData encodes (address positionAccount, address tokenIn, address tokenOut,
-        // address recipient) when sent via the trusted adapter.
-        // If hookData is short or malformed, skip netting entirely.
         BeforeSwapDelta netDelta = _tryNet(sender, params, hookData);
 
         return (IHooks.beforeSwap.selector, netDelta, overrideFee);
@@ -282,6 +312,7 @@ contract OptionSettlementHook is IHooks {
 
     // ─── afterSwap ────────────────────────────────────────────────────────────
 
+    /// @inheritdoc IHooks
     /// @notice Called by PoolManager after every swap. Informational only — never reverts.
     function afterSwap(address, PoolKey calldata, SwapParams calldata, BalanceDelta delta, bytes calldata)
         external
@@ -300,13 +331,11 @@ contract OptionSettlementHook is IHooks {
     ///
     ///      Path A — direct call (sender != trustedAdapter, or trustedAdapter == address(0)):
     ///        Verify `sender` directly via ERC-6551 token() introspection.
-    ///        Used in tests and when a PositionAccount directly calls PoolManager (future).
+    ///        Used in tests and when a PositionAccount directly calls PoolManager.
     ///
     ///      Path B — via trusted adapter (sender == trustedAdapter):
     ///        The adapter prepended abi.encode(positionAccount) to hookData.
     ///        Decode hookData[0:32] as the PositionAccount and verify that instead.
-    ///        The adapter is trusted because it can only be reached via a genuine
-    ///        poolManager.unlock() context (its onlyPoolManager guard).
     ///
     ///      Reverts with InvalidOptionAccount if verification fails.
     function _requireKnownPositionAccount(address sender, bytes calldata hookData) internal view {
@@ -314,7 +343,6 @@ contract OptionSettlementHook is IHooks {
 
         if (trustedAdapter != address(0) && sender == trustedAdapter) {
             // Path B: adapter forwarded the PositionAccount in the first 32 bytes of hookData.
-            // hookData must be at least 32 bytes (abi.encode of one address = 32 bytes).
             if (hookData.length < 32) revert InvalidOptionAccount(sender);
             accountToVerify = abi.decode(hookData[0:32], (address));
         } else {
@@ -339,19 +367,11 @@ contract OptionSettlementHook is IHooks {
         internal
         returns (BeforeSwapDelta)
     {
-        // Determine netting data offset.
-        // Via adapter: hookData = abi.encode(positionAccount) ++ abi.encode(tokenIn, tokenOut, recipient)
-        //              total = 32 + 96 = 128 bytes minimum
-        // Direct path: hookData = abi.encode(tokenIn, tokenOut, recipient)
-        //              total = 96 bytes minimum
-        // Anything shorter: skip netting.
         uint256 offset;
         if (trustedAdapter != address(0) && sender == trustedAdapter) {
-            // Adapter path: netting data starts at byte 32.
             if (hookData.length < 128) return toBeforeSwapDelta(0, 0);
             offset = 32;
         } else {
-            // Direct path: netting data starts at byte 0.
             if (hookData.length < 96) return toBeforeSwapDelta(0, 0);
             offset = 0;
         }

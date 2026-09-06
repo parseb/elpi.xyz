@@ -24,5 +24,8 @@ pragma solidity 0.8.26;
 interface ILPSettlementHook {
     /// @notice Notifies that `amount` of `asset` was just transferred to this address as the
     ///         LP-directed outflow of `positionId`'s settlement.
+    /// @param positionId The position identifier being settled.
+    /// @param asset The token asset address transferred to the LP.
+    /// @param amount The quantity of tokens transferred.
     function onPositionSettled(uint256 positionId, address asset, uint256 amount) external;
 }

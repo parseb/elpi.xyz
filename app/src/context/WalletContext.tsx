@@ -21,7 +21,7 @@ import {
   ERC20Abi,
 } from '@/lib/client';
 
-export type WalletPersona = 'DEPLOYER' | 'LP' | 'TAKER' | 'INJECTED';
+export type WalletPersona = 'DEPLOYER' | 'LP' | 'TAKER' | 'TAKER2' | 'INJECTED';
 
 export interface WalletBalances {
   eth: string;
@@ -53,14 +53,19 @@ const DEVNET_ACCOUNTS = {
     label: 'Deployer / Governance',
   },
   LP: {
-    address: '0x70997970C51812dc3A010C7d01b50e0d17dc79C8' as Address,
-    key: '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d' as `0x${string}`,
-    label: 'Alice (LP / Vault)',
+    address: '0xf85B008086EA4f59f17aE9E0665962a1e45c7855' as Address,
+    key: '0xb9912f8133b56bb35ebf2baf7a62faa21e0c30f865c4e9abc599aab8bcb7e7fa' as `0x${string}`,
+    label: 'Alice (elpi1 / LP Vault)',
   },
   TAKER: {
-    address: '0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC' as Address,
-    key: '0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a' as `0x${string}`,
-    label: 'Bob (Taker / Trader)',
+    address: '0x61755DF0a398ee315bcC077d99B5eaC7c73ca813' as Address,
+    key: '0xfdc6e5b4548767f71e2b7b835529510d49436a578dc5b57ede07a2be0866c0b4' as `0x${string}`,
+    label: 'Bob (elpi2 / Taker 1)',
+  },
+  TAKER2: {
+    address: '0xEB1b98c730a0fA3F3419cb201D343D509767865b' as Address,
+    key: '0x4f6640b8640a7981a1c1f13b600f848c860f51a0e33fd445713d21ced84628c5' as `0x${string}`,
+    label: 'Charlie (elpi3 / Taker 2)',
   },
 };
 
@@ -186,7 +191,7 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   useEffect(() => {
     if (!address && typeof window !== 'undefined') {
       const savedPersona = localStorage.getItem('elpi_persona') as WalletPersona | null;
-      if (savedPersona && (savedPersona === 'DEPLOYER' || savedPersona === 'LP' || savedPersona === 'TAKER')) {
+      if (savedPersona && (savedPersona === 'DEPLOYER' || savedPersona === 'LP' || savedPersona === 'TAKER' || savedPersona === 'TAKER2')) {
         connect(savedPersona);
       } else if (process.env.NEXT_PUBLIC_BASE_RPC_URL?.includes('127.0.0.1')) {
         // Default to LP persona for instant dev experience

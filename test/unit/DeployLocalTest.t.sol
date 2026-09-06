@@ -46,11 +46,30 @@ contract DeployLocalTest is Test {
         assertEq(d.vault.owner(), deployScript.LP_PERSONA(), "Vault owner mismatch");
         assertEq(d.vault.lpRouter(), deployScript.DEPLOYER(), "Vault router mismatch");
 
-        // Assert persona balances
-        assertEq(d.weth.balanceOf(deployScript.LP_PERSONA()), 100 * 1e18, "LP WETH balance");
+        // Assert persona balances (LP deposited 25 WETH into vault, leaving 75 WETH liquid)
+        assertEq(d.weth.balanceOf(deployScript.LP_PERSONA()), 75 * 1e18, "LP WETH liquid balance");
+        assertEq(
+            d.weth.balanceOf(address(d.vault)) + d.weth.balanceOf(address(d.poolManager)),
+            25 * 1e18,
+            "Vault + PoolManager total staged WETH"
+        );
+        assertGt(d.weth.balanceOf(address(d.poolManager)), 0, "PoolManager has v4 liquidity token0");
         assertEq(d.usdc.balanceOf(deployScript.LP_PERSONA()), 100_000 * 1e6, "LP USDC balance");
         assertEq(d.weth.balanceOf(deployScript.TAKER_PERSONA()), 50 * 1e18, "Taker WETH balance");
         assertEq(d.usdc.balanceOf(deployScript.TAKER_PERSONA()), 50_000 * 1e6, "Taker USDC balance");
+        assertEq(d.weth.balanceOf(deployScript.TAKER2_PERSONA()), 50 * 1e18, "Taker 2 WETH balance");
+        assertEq(d.usdc.balanceOf(deployScript.TAKER2_PERSONA()), 50_000 * 1e6, "Taker 2 USDC balance");
+
+        // Assert allowances pre-seeded
+        assertEq(d.weth.allowance(deployScript.LP_PERSONA(), address(d.vault)), type(uint256).max, "LP vault WETH allowance");
+        assertEq(d.weth.allowance(deployScript.TAKER_PERSONA(), address(d.venueAdapter)), type(uint256).max, "Taker adapter WETH allowance");
+        assertEq(d.usdc.allowance(deployScript.TAKER_PERSONA(), address(d.venueAdapter)), type(uint256).max, "Taker adapter USDC allowance");
+        assertEq(d.weth.allowance(deployScript.TAKER2_PERSONA(), address(d.venueAdapter)), type(uint256).max, "Taker 2 adapter WETH allowance");
+        assertEq(d.usdc.allowance(deployScript.TAKER2_PERSONA(), address(d.venueAdapter)), type(uint256).max, "Taker 2 adapter USDC allowance");
+
+        // Assert raw hash addresses also received token mints
+        assertEq(d.weth.balanceOf(deployScript.ELPI1_HASH_ADDR()), 10 * 1e18, "LP hash WETH balance");
+        assertEq(d.usdc.balanceOf(deployScript.ELPI1_HASH_ADDR()), 10_000 * 1e6, "LP hash USDC balance");
     }
 
     function test_mockPriceOracle_setPrice_and_freshness() public {

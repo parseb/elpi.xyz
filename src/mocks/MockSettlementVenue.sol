@@ -7,6 +7,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {ISettlementVenue} from "../interfaces/ISettlementVenue.sol";
 
 /// @title MockSettlementVenue
+/// @author parseb
 /// @notice Controllable settlement venue implementing ISettlementVenue.
 /// @dev Allows the Dev Console to steer exchange rates via setRate(numerator, denominator)
 ///      synchronously with the mock oracle, preventing slippage reverts.

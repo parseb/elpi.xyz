@@ -4,6 +4,7 @@ pragma solidity 0.8.26;
 import {IPriceOracle} from "../interfaces/IPriceOracle.sol";
 
 /// @title MockPriceOracle
+/// @author parseb
 /// @notice Controllable mock oracle implementing both elpi's IPriceOracle interface
 ///         and Chainlink's AggregatorV3Interface.
 /// @dev Used by Dev Console and automated E2E tests to manipulate spot prices and timestamps.
@@ -61,7 +62,7 @@ contract MockPriceOracle is IPriceOracle {
     // ─── IPriceOracle Implementation ──────────────────────────────────────────
 
     /// @inheritdoc IPriceOracle
-    function price(address collateralAsset_, address settlementAsset_)
+    function price(address /*collateralAsset_*/, address /*settlementAsset_*/)
         external
         view
         override

@@ -70,16 +70,40 @@ contract MockPoolManager {
         IERC20(Currency.unwrap(currency)).safeTransfer(recipient, amount);
     }
 
+    mapping(address => Currency) public defaultCurrency;
+
+    function setDefaultCurrency(address vault, Currency currency) external {
+        defaultCurrency[vault] = currency;
+    }
+
     function modifyLiquidity(PoolKey calldata key, ModifyLiquidityParams calldata params, bytes calldata)
         external
         returns (BalanceDelta, BalanceDelta)
     {
         if (shouldRevert) revert("MockRevert");
 
-        int128 amount0 = int128(params.liquidityDelta);
+        int128 amount = int128(params.liquidityDelta);
 
-        // Return delta only for currency0 to simulate a single-sided deposit
-        // and avoid requiring the vault to have balance of currency1 (address(2)).
-        return (toBalanceDelta(int128(-amount0), 0), toBalanceDelta(0, 0));
+        // Determine whether msg.sender operates with currency1
+        bool isCurrency1 = false;
+        address token1 = Currency.unwrap(key.currency1);
+        if (token1 != address(0) && token1 != address(2) && token1.code.length > 0) {
+            try IERC20(token1).allowance(msg.sender, address(this)) returns (uint256 a1) {
+                if (a1 > 0) {
+                    isCurrency1 = true;
+                    defaultCurrency[msg.sender] = key.currency1;
+                }
+            } catch {}
+        }
+
+        if (!isCurrency1 && Currency.unwrap(defaultCurrency[msg.sender]) == token1 && token1 != address(0)) {
+            isCurrency1 = true;
+        }
+
+        if (isCurrency1) {
+            return (toBalanceDelta(0, int128(-amount)), toBalanceDelta(0, 0));
+        }
+
+        return (toBalanceDelta(int128(-amount), 0), toBalanceDelta(0, 0));
     }
 }

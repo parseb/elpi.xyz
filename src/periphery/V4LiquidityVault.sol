@@ -73,19 +73,62 @@ contract V4LiquidityVault is ILPSettlementHook, IERC1271, IUnlockCallback {
 
     // ─── Errors & Events ──────────────────────────────────────────────────────
 
+    /// @notice Thrown when action is restricted to vault owner.
     error OnlyOwner();
+
+    /// @notice Thrown when action is restricted to the authorized LPRouter.
     error OnlyLPRouter();
+
+    /// @notice Thrown when unlockCallback is called by an unauthorized address.
     error OnlyPoolManager();
+
+    /// @notice Thrown when internal callback is called externally.
     error OnlySelf();
 
+    /// @notice Thrown when a zero address parameter is supplied where prohibited.
+    error ZeroAddress();
+
+    /// @notice Thrown when an amount parameter is zero.
+    error ZeroAmount();
+
+    /// @notice Thrown when tickLower >= tickUpper.
+    error InvalidTickRange();
+
+    /// @notice Emitted when collateral is deposited into the vault and staged in v4.
+    /// @param asset The ERC-20 token address.
+    /// @param amount The deposited amount.
     event Deposited(address indexed asset, uint256 amount);
+
+    /// @notice Emitted when collateral is withdrawn to owner.
+    /// @param asset The ERC-20 token address.
+    /// @param amount The withdrawn amount.
     event Withdrawn(address indexed asset, uint256 amount);
+
+    /// @notice Emitted when liquid ERC-20 is extracted for option minting.
+    /// @param asset The ERC-20 token address.
+    /// @param amount The extracted amount.
     event ExtractedForMint(address indexed asset, uint256 amount);
+
+    /// @notice Emitted on an auto-restake attempt after position settlement.
+    /// @param asset The ERC-20 token address.
+    /// @param amount The restake amount.
+    /// @param success Whether restaking succeeded or accumulated in pendingAsset.
     event RestakeAttempted(address indexed asset, uint256 amount, bool success);
+
+    /// @notice Emitted when owner manually restakes pending assets.
+    /// @param asset The ERC-20 token address.
+    /// @param amount The restaked amount.
     event ManualRestaked(address indexed asset, uint256 amount);
 
     // ─── Constructor ──────────────────────────────────────────────────────────
 
+    /// @notice Initializes the V4LiquidityVault.
+    /// @param poolManager_ The Uniswap v4 PoolManager contract.
+    /// @param key_ The PoolKey representing the v4 pool.
+    /// @param tickLower_ The lower tick boundary for staging liquidity.
+    /// @param tickUpper_ The upper tick boundary for staging liquidity.
+    /// @param owner_ The LP owner address.
+    /// @param lpRouter_ The LPRouter address authorized for extractForMint.
     constructor(
         address poolManager_,
         PoolKey memory key_,
@@ -94,10 +137,10 @@ contract V4LiquidityVault is ILPSettlementHook, IERC1271, IUnlockCallback {
         address owner_,
         address lpRouter_
     ) {
-        require(poolManager_ != address(0), "V4LiquidityVault: zero poolManager");
-        require(owner_ != address(0), "V4LiquidityVault: zero owner");
-        require(lpRouter_ != address(0), "V4LiquidityVault: zero lpRouter");
-        require(tickLower_ < tickUpper_, "V4LiquidityVault: invalid tick range");
+        if (poolManager_ == address(0)) revert ZeroAddress();
+        if (owner_ == address(0)) revert ZeroAddress();
+        if (lpRouter_ == address(0)) revert ZeroAddress();
+        if (tickLower_ >= tickUpper_) revert InvalidTickRange();
 
         poolManager = IPoolManager(poolManager_);
         poolKey = key_;
@@ -110,19 +153,29 @@ contract V4LiquidityVault is ILPSettlementHook, IERC1271, IUnlockCallback {
     // ─── Owner-controlled liquidity management ────────────────────────────────
 
     /// @notice Deposit collateral and add it as v4 liquidity.
-    /// @dev    Only the owner (LP or multisig) may deposit.
-    ///         After this call the vault holds no loose ERC-20 balance of `asset`
-    ///         (it is all staked in the v4 pool position).
+    /// @param asset Address of the ERC-20 collateral.
+    /// @param amount Amount to deposit.
+    /// @dev Only the owner (LP or multisig) may deposit.
+    ///      After this call the vault holds no loose ERC-20 balance of `asset`
+    ///      (it is all staked in the v4 pool position).
     function deposit(address asset, uint256 amount) external {
         if (msg.sender != owner) revert OnlyOwner();
+        if (asset == address(0)) revert ZeroAddress();
+        if (amount == 0) revert ZeroAmount();
+
         IERC20(asset).safeTransferFrom(msg.sender, address(this), amount);
         _addLiquidity(asset, amount);
         emit Deposited(asset, amount);
     }
 
     /// @notice Remove liquidity and withdraw raw ERC-20 to the owner.
+    /// @param asset Address of the ERC-20 collateral.
+    /// @param amount Amount to withdraw.
     function withdraw(address asset, uint256 amount) external {
         if (msg.sender != owner) revert OnlyOwner();
+        if (asset == address(0)) revert ZeroAddress();
+        if (amount == 0) revert ZeroAmount();
+
         _removeLiquidity(asset, amount);
         IERC20(asset).safeTransfer(owner, amount);
         emit Withdrawn(asset, amount);
@@ -133,18 +186,19 @@ contract V4LiquidityVault is ILPSettlementHook, IERC1271, IUnlockCallback {
     /// @notice Remove v4 liquidity so LPRouter can pull raw ERC-20 via transferFrom
     ///         at matchAndMint time. The extracted amount sits as a loose ERC-20
     ///         balance in this vault until LPRouter._pullCollateral calls transferFrom.
-    ///
-    /// @dev    Two-transaction sequence (v1):
-    ///           tx1: lpRouter calls extractForMint(asset, amount)
-    ///           tx2: matchAndMint executes, pulling ERC-20 from this vault
-    ///         The vault must have approved LPRouter for the asset before tx2.
-    ///         This approval is handled by _addLiquidity/extractForMint via
-    ///         safeIncreaseAllowance prior to the matchAndMint call in the LP app.
+    /// @param asset Address of the ERC-20 collateral to extract.
+    /// @param amount Amount to extract.
+    /// @dev Two-transaction sequence (v1):
+    ///        tx1: lpRouter calls extractForMint(asset, amount)
+    ///        tx2: matchAndMint executes, pulling ERC-20 from this vault
     function extractForMint(address asset, uint256 amount) external {
         if (msg.sender != lpRouter) revert OnlyLPRouter();
+        if (asset == address(0)) revert ZeroAddress();
+        if (amount == 0) revert ZeroAmount();
+
         _removeLiquidity(asset, amount);
         // Approve LPRouter to pull the now-liquid ERC-20.
-        IERC20(asset).safeIncreaseAllowance(lpRouter, amount);
+        IERC20(asset).forceApprove(lpRouter, amount);
         emit ExtractedForMint(asset, amount);
     }
 
@@ -153,15 +207,13 @@ contract V4LiquidityVault is ILPSettlementHook, IERC1271, IUnlockCallback {
     /// @inheritdoc ILPSettlementHook
     /// @notice Receives settlement proceeds and attempts to re-stake them into the v4 pool.
     ///         Best-effort: if re-staking fails, proceeds accumulate in pendingAsset[asset].
-    ///
-    /// @dev    MUST NOT revert in a way that blocks settlement. PositionAccount._notifyLp
-    ///         calls this inside a try/catch with LP_HOOK_GAS = 300,000 (PositionAccount.sol L52).
-    ///         Any revert from this function is silently absorbed by the account. (I3 design.)
-    ///
-    ///         We use the same pattern here: this function itself never reverts. Re-staking
-    ///         is attempted via `try this._restake(...)` — if it fails, proceeds stay in
-    ///         pendingAsset for manual recovery.
+    /// @param asset Address of settlement asset received.
+    /// @param amount Amount of settlement proceeds received.
+    /// @dev MUST NOT revert in a way that blocks settlement. PositionAccount._notifyLp
+    ///      calls this inside a try/catch with LP_HOOK_GAS = 300,000.
     function onPositionSettled(uint256, /* positionId */ address asset, uint256 amount) external override {
+        if (amount == 0 || asset == address(0)) return;
+
         // Accumulate first, then attempt restake. If restake fails, pendingAsset[asset]
         // retains the amount so the owner can recover via manualRestake().
         pendingAsset[asset] += amount;
@@ -176,17 +228,21 @@ contract V4LiquidityVault is ILPSettlementHook, IERC1271, IUnlockCallback {
         emit RestakeAttempted(asset, amount, success);
     }
 
-    /// @dev Called only by this contract via try/catch in onPositionSettled.
-    ///      External visibility is required so the try/catch pattern works in Solidity.
+    /// @notice Internal restake helper called via external try/catch.
+    /// @param asset Address of asset to restake.
+    /// @param amount Amount to restake into v4 pool.
     function _restake(address asset, uint256 amount) external {
         if (msg.sender != address(this)) revert OnlySelf();
         _addLiquidity(asset, amount);
     }
 
     /// @notice Owner can manually re-stake accumulated pendingAsset after repeated
-    ///         restaking failures (e.g., pool was temporarily paused or insufficient gas).
+    ///         restaking failures.
+    /// @param asset Address of asset to restake.
     function manualRestake(address asset) external {
         if (msg.sender != owner) revert OnlyOwner();
+        if (asset == address(0)) revert ZeroAddress();
+
         uint256 amount = pendingAsset[asset];
         if (amount == 0) return;
         pendingAsset[asset] = 0;
@@ -196,8 +252,10 @@ contract V4LiquidityVault is ILPSettlementHook, IERC1271, IUnlockCallback {
 
     /// @notice Withdraws any claimable payout from LPRouter and restakes it into the v4 pool (UV-Q6).
     ///         Callable by anyone (vault owner, router restaker helper, or automated keeper bot).
-    /// @param asset The token asset to withdraw and restake
+    /// @param asset The token asset to withdraw and restake.
     function restakeFromRouter(address asset) external {
+        if (asset == address(0)) revert ZeroAddress();
+
         uint256 beforeBal = IERC20(asset).balanceOf(address(this));
         ILPRouter(lpRouter).withdraw(asset);
         uint256 received = IERC20(asset).balanceOf(address(this)) - beforeBal;
@@ -217,8 +275,10 @@ contract V4LiquidityVault is ILPSettlementHook, IERC1271, IUnlockCallback {
 
     /// @inheritdoc IERC1271
     /// @notice Validates signatures from the vault owner. Enables this vault to act as
-    ///         BackerQuote.backer — LPRouter._verifyQuoteSignature calls this on the
-    ///         ERC-1271 path (artefacts/src/periphery/LPRouter.sol L130–142).
+    ///         BackerQuote.backer.
+    /// @param hash The digest signed.
+    /// @param signature The signature bytes.
+    /// @return magicValue 0x1626ba7e if valid, 0xffffffff otherwise.
     function isValidSignature(bytes32 hash, bytes calldata signature) external view override returns (bytes4) {
         (address signer,,) = ECDSA.tryRecover(hash, signature);
         if (signer == owner) return 0x1626ba7e; // ERC-1271 magic value
@@ -227,10 +287,10 @@ contract V4LiquidityVault is ILPSettlementHook, IERC1271, IUnlockCallback {
 
     // ─── IUnlockCallback ──────────────────────────────────────────────────────
 
+    /// @inheritdoc IUnlockCallback
     /// @notice Called by PoolManager during the unlock context for liquidity operations.
-    /// @dev    Dispatches on action byte: 0 = add liquidity, 1 = remove liquidity.
-    ///         Full LiquidityAmounts math is performed here to compute the exact
-    ///         liquidity delta from the token amount.
+    /// @param data ABI-encoded action byte, asset address, and amount.
+    /// @return Empty bytes.
     function unlockCallback(bytes calldata data) external override returns (bytes memory) {
         if (msg.sender != address(poolManager)) revert OnlyPoolManager();
 
@@ -249,7 +309,7 @@ contract V4LiquidityVault is ILPSettlementHook, IERC1271, IUnlockCallback {
 
     /// @dev Approve PoolManager and initiate the unlock context for adding liquidity.
     function _addLiquidity(address asset, uint256 amount) internal {
-        IERC20(asset).safeIncreaseAllowance(address(poolManager), amount);
+        IERC20(asset).forceApprove(address(poolManager), amount);
         poolManager.unlock(abi.encode(ACTION_ADD, asset, amount));
     }
 
@@ -259,15 +319,11 @@ contract V4LiquidityVault is ILPSettlementHook, IERC1271, IUnlockCallback {
     }
 
     /// @dev Called inside unlockCallback for action = ACTION_ADD.
-    ///      Adds a single-asset liquidity position to the v4 pool.
-    ///      Full LiquidityAmounts computation is performed on-chain using v4-core's
-    ///      SqrtPriceMath to derive the liquidity delta from the token amount.
-    function _handleAddLiquidity(address asset, uint256 amount) internal {
-        // We use a simplified full-range logic here. A real vault uses LiquidityAmounts.
+    function _handleAddLiquidity(address, uint256 amount) internal {
         ModifyLiquidityParams memory params = ModifyLiquidityParams({
             tickLower: tickLower,
             tickUpper: tickUpper,
-            liquidityDelta: int256(amount), // simplified
+            liquidityDelta: int256(amount),
             salt: bytes32(0)
         });
 
@@ -288,12 +344,11 @@ contract V4LiquidityVault is ILPSettlementHook, IERC1271, IUnlockCallback {
     }
 
     /// @dev Called inside unlockCallback for action = ACTION_REMOVE.
-    ///      Removes liquidity from the v4 pool and claims the resulting ERC-20.
-    function _handleRemoveLiquidity(address asset, uint256 amount) internal {
+    function _handleRemoveLiquidity(address, uint256 amount) internal {
         ModifyLiquidityParams memory params = ModifyLiquidityParams({
             tickLower: tickLower,
             tickUpper: tickUpper,
-            liquidityDelta: -int256(amount), // remove
+            liquidityDelta: -int256(amount),
             salt: bytes32(0)
         });
 

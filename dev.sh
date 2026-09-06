@@ -103,7 +103,12 @@ if [ "$NEEDS_DEPLOYMENT" = true ]; then
     --rpc-url "http://127.0.0.1:$RPC_PORT" \
     --broadcast \
     --private-key "$DEPLOYER_KEY" > /tmp/elpi-deploy.log 2>&1
-  echo "✔ Local deployment and liquidity seeding complete."
+  echo "✔ Local deployment complete."
+
+  if [ -f "$DIR/script/seed-liquidity.sh" ]; then
+    echo "🌱 Seeding mock liquidity, allowances, and test quotes..."
+    bash "$DIR/script/seed-liquidity.sh"
+  fi
 else
   echo "✔ Reusing existing deployment recorded in local-anvil.json."
 fi
@@ -140,6 +145,10 @@ if [ $# -gt 0 ]; then
   done
 
   if [ ${#FILTERED_ARGS[@]} -gt 0 ]; then
+    if [ "${FILTERED_ARGS[0]}" = "seed" ]; then
+      bash "$DIR/script/seed-liquidity.sh"
+      exit 0
+    fi
     node --experimental-strip-types "$DIR/dev-console.ts" "${FILTERED_ARGS[@]}"
     exit 0
   fi

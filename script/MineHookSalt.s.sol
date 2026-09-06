@@ -6,6 +6,8 @@ import {Hooks} from "@uniswap/v4-core/src/libraries/Hooks.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 import {OptionSettlementHook} from "../src/hooks/OptionSettlementHook.sol";
 
+/// @title MineHookSalt
+/// @author parseb
 /// @notice Brute-force a CREATE2 salt that produces an OptionSettlementHook address
 ///         satisfying Uniswap v4's hook flag bitmap.
 ///

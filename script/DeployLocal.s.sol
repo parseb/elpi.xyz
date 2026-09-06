@@ -27,11 +27,35 @@ contract DeployLocal is Script {
     int24 public constant DEFAULT_TICK_SPACING = 60;
     uint160 public constant INITIAL_SQRT_PRICE_1_1 = 79228162514264337593543950336;
 
-    // Standard Anvil Personas
+    // Standard Anvil Personas (Accounts 0-3)
     address public constant DEPLOYER = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
-    address public constant LP_PERSONA = 0x70997970C51812dc3A010C7d01b50e0d17dc79C8;
-    address public constant TAKER_PERSONA = 0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC;
-    address public constant FEE_VAULT = 0x90F79bf6EB2c4f870365E785982E1f101E93b906;
+    address public constant ANVIL_LP = 0x70997970C51812dc3A010C7d01b50e0d17dc79C8;
+    address public constant ANVIL_TAKER = 0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC;
+    address public constant ANVIL_FEE_VAULT = 0x90F79bf6EB2c4f870365E785982E1f101E93b906;
+
+    // Deterministic Personas derived from "elpi1" .. "elpi5"
+    uint256 public constant ELPI1_PK = uint256(keccak256("elpi1"));
+    uint256 public constant ELPI2_PK = uint256(keccak256("elpi2"));
+    uint256 public constant ELPI3_PK = uint256(keccak256("elpi3"));
+    uint256 public constant ELPI4_PK = uint256(keccak256("elpi4"));
+    uint256 public constant ELPI5_PK = uint256(keccak256("elpi5"));
+
+    address public constant ELPI1_ADDR = 0xf85B008086EA4f59f17aE9E0665962a1e45c7855; // LP / Maker with Uniswap positions
+    address public constant ELPI2_ADDR = 0x61755DF0a398ee315bcC077d99B5eaC7c73ca813; // Taker 1 / Trader
+    address public constant ELPI3_ADDR = 0xEB1b98c730a0fA3F3419cb201D343D509767865b; // Taker 2 / Settlement
+    address public constant ELPI4_ADDR = 0x4A60DB79Eede5e98f8b71f78D1b6d311ECDD8885; // Secondary LP / Maker
+    address public constant ELPI5_ADDR = 0x6C02839e831b680aB61D5De8AfF676e9a878e825; // Fee Vault / Governance
+
+    address public constant ELPI1_HASH_ADDR = 0x7A62FaA21E0C30F865C4e9ABC599Aab8BCB7e7fA;
+    address public constant ELPI2_HASH_ADDR = 0x5529510D49436a578DC5B57eDe07A2bE0866c0b4;
+    address public constant ELPI3_HASH_ADDR = 0x600F848C860F51A0e33fd445713d21ced84628C5;
+    address public constant ELPI4_HASH_ADDR = 0xb07061dEE9df63a7b6DaDBfBe4B27a07B73A681c;
+    address public constant ELPI5_HASH_ADDR = 0x9Dc9C01d355f03d991bf53fd00D2eD27e2Da527C;
+
+    address public constant LP_PERSONA = ELPI1_ADDR;
+    address public constant TAKER_PERSONA = ELPI2_ADDR;
+    address public constant TAKER2_PERSONA = ELPI3_ADDR;
+    address public constant FEE_VAULT = ELPI5_ADDR;
 
     struct LocalDeployment {
         MockERC20 weth;
@@ -135,26 +159,9 @@ contract DeployLocal is Script {
 
         (bool success, bytes memory returnData) = factory.call(abi.encodePacked(salt, hookCreationCode));
         require(success && returnData.length == 20, "Hook CREATE2 deployment failed");
-        address hookAddr;
-        assembly {
-            hookAddr := mload(add(returnData, 20))
-        }
-        deployed.hook = OptionSettlementHook(hookAddr);
-        require(address(deployed.hook) == predictedHook, "Hook predicted address mismatch");
+        deployed.hook = OptionSettlementHook(predictedHook);
 
-        // Authorize deployer and personas as position manager delegates in hook
-        if (!vm.isContext(VmSafe.ForgeContext.ScriptBroadcast)) {
-            vm.prank(deployer);
-            deployed.hook.addPositionManager(DEPLOYER);
-            vm.prank(deployer);
-            deployed.hook.addPositionManager(LP_PERSONA);
-            vm.prank(deployer);
-            deployed.hook.addPositionManager(TAKER_PERSONA);
-        } else {
-            deployed.hook.addPositionManager(DEPLOYER);
-            deployed.hook.addPositionManager(LP_PERSONA);
-            deployed.hook.addPositionManager(TAKER_PERSONA);
-        }
+        _authorizeManagers(deployed.hook, deployer);
 
         // Setup route in adapter for WETH/USDC
         (address c0, address c1) = address(deployed.weth) < address(deployed.usdc)
@@ -175,35 +182,178 @@ contract DeployLocal is Script {
         console.log("Uniswap v4 Route registered. RouteId:", vm.toString(deployed.routeId));
 
         // 5. Deploy V4LiquidityVault for LP collateral staging
+        bool isWethCurrency0 = c0 == address(deployed.weth);
+        int24 vaultTickLower = isWethCurrency0 ? int24(600) : int24(-1200);
+        int24 vaultTickUpper = isWethCurrency0 ? int24(1200) : int24(-600);
+
         deployed.vault = new V4LiquidityVault(
             address(deployed.poolManager),
             deployed.poolKey,
-            600,
-            1200,
+            vaultTickLower,
+            vaultTickUpper,
             LP_PERSONA,
             DEPLOYER // lpRouter
         );
         console.log("V4LiquidityVault deployed at:", address(deployed.vault));
 
-        // 6. Fund Personas
-        // LP / Maker
-        deployed.weth.mint(LP_PERSONA, 100 * 1e18);
-        deployed.wbtc.mint(LP_PERSONA, 10 * 1e8);
-        deployed.usdc.mint(LP_PERSONA, 100_000 * 1e6);
+        // 6. Fund Personas & Gas
+        _fundAccounts(deployed);
 
-        // Taker / Trader
-        deployed.weth.mint(TAKER_PERSONA, 50 * 1e18);
-        deployed.wbtc.mint(TAKER_PERSONA, 5 * 1e8);
-        deployed.usdc.mint(TAKER_PERSONA, 50_000 * 1e6);
+        // 7. Seed LP Uniswap v4 Staged Liquidity Position & Pre-Approvals
+        _seedLPAndApprovals(deployed, deployer);
 
-        // Deployer / Fee Vault
-        deployed.weth.mint(DEPLOYER, 100 * 1e18);
-        deployed.wbtc.mint(DEPLOYER, 10 * 1e8);
-        deployed.usdc.mint(DEPLOYER, 100_000 * 1e6);
-        deployed.usdc.mint(FEE_VAULT, 10_000 * 1e6);
-
-        console.log("Personas funded successfully.");
         console.log("=== Deployment Complete ===");
+    }
+
+    function _authorizeManagers(OptionSettlementHook hookContract, address deployer) internal {
+        address[7] memory managers = [
+            DEPLOYER,
+            ANVIL_LP,
+            ANVIL_TAKER,
+            ELPI1_ADDR,
+            ELPI2_ADDR,
+            ELPI3_ADDR,
+            ELPI4_ADDR
+        ];
+        bool isBroadcast = vm.isContext(VmSafe.ForgeContext.ScriptBroadcast);
+        for (uint256 i = 0; i < managers.length; i++) {
+            if (!isBroadcast) {
+                vm.prank(deployer);
+                hookContract.addPositionManager(managers[i]);
+            } else {
+                hookContract.addPositionManager(managers[i]);
+            }
+        }
+    }
+
+    function _fundAccounts(LocalDeployment memory d) internal {
+        bool isBroadcast = vm.isContext(VmSafe.ForgeContext.ScriptBroadcast);
+
+        address[10] memory ethRecipients = [
+            ELPI1_ADDR,
+            ELPI2_ADDR,
+            ELPI3_ADDR,
+            ELPI4_ADDR,
+            ELPI5_ADDR,
+            ELPI1_HASH_ADDR,
+            ELPI2_HASH_ADDR,
+            ELPI3_HASH_ADDR,
+            ANVIL_LP,
+            ANVIL_TAKER
+        ];
+
+        for (uint256 i = 0; i < ethRecipients.length; i++) {
+            if (isBroadcast) {
+                payable(ethRecipients[i]).transfer(5 ether);
+            } else {
+                vm.deal(ethRecipients[i], 100 ether);
+            }
+        }
+
+        // elpi1 (LP)
+        d.weth.mint(ELPI1_ADDR, 100 * 1e18);
+        d.wbtc.mint(ELPI1_ADDR, 10 * 1e8);
+        d.usdc.mint(ELPI1_ADDR, 100_000 * 1e6);
+        d.weth.mint(ELPI1_HASH_ADDR, 10 * 1e18);
+        d.usdc.mint(ELPI1_HASH_ADDR, 10_000 * 1e6);
+
+        // elpi2 (Taker 1)
+        d.weth.mint(ELPI2_ADDR, 50 * 1e18);
+        d.wbtc.mint(ELPI2_ADDR, 5 * 1e8);
+        d.usdc.mint(ELPI2_ADDR, 50_000 * 1e6);
+        d.weth.mint(ELPI2_HASH_ADDR, 10 * 1e18);
+        d.usdc.mint(ELPI2_HASH_ADDR, 10_000 * 1e6);
+
+        // elpi3 (Taker 2)
+        d.weth.mint(ELPI3_ADDR, 50 * 1e18);
+        d.wbtc.mint(ELPI3_ADDR, 5 * 1e8);
+        d.usdc.mint(ELPI3_ADDR, 50_000 * 1e6);
+        d.weth.mint(ELPI3_HASH_ADDR, 10 * 1e18);
+        d.usdc.mint(ELPI3_HASH_ADDR, 10_000 * 1e6);
+
+        // elpi4 (Secondary LP)
+        d.weth.mint(ELPI4_ADDR, 50 * 1e18);
+        d.wbtc.mint(ELPI4_ADDR, 5 * 1e8);
+        d.usdc.mint(ELPI4_ADDR, 50_000 * 1e6);
+
+        // elpi5 (Fee Vault)
+        d.usdc.mint(ELPI5_ADDR, 10_000 * 1e6);
+
+        // standard Anvil personas
+        d.weth.mint(ANVIL_LP, 100 * 1e18);
+        d.wbtc.mint(ANVIL_LP, 10 * 1e8);
+        d.usdc.mint(ANVIL_LP, 100_000 * 1e6);
+
+        d.weth.mint(ANVIL_TAKER, 50 * 1e18);
+        d.wbtc.mint(ANVIL_TAKER, 5 * 1e8);
+        d.usdc.mint(ANVIL_TAKER, 50_000 * 1e6);
+
+        d.weth.mint(DEPLOYER, 100 * 1e18);
+        d.wbtc.mint(DEPLOYER, 10 * 1e8);
+        d.usdc.mint(DEPLOYER, 100_000 * 1e6);
+        d.usdc.mint(ANVIL_FEE_VAULT, 10_000 * 1e6);
+    }
+
+    function _seedLPAndApprovals(LocalDeployment memory d, address deployer) internal {
+        bool isBroadcast = vm.isContext(VmSafe.ForgeContext.ScriptBroadcast);
+        uint256 depositAmount = 25 * 1e18; // 25 WETH staked into Uniswap v4
+
+        if (!isBroadcast) {
+            vm.startPrank(LP_PERSONA);
+            d.weth.approve(address(d.vault), type(uint256).max);
+            d.usdc.approve(address(d.vault), type(uint256).max);
+            d.weth.approve(address(d.venueAdapter), type(uint256).max);
+            d.usdc.approve(address(d.venueAdapter), type(uint256).max);
+            d.weth.approve(address(d.mockVenue), type(uint256).max);
+            d.usdc.approve(address(d.mockVenue), type(uint256).max);
+            d.vault.deposit(address(d.weth), depositAmount);
+            vm.stopPrank();
+
+            vm.startPrank(TAKER_PERSONA);
+            d.weth.approve(address(d.venueAdapter), type(uint256).max);
+            d.usdc.approve(address(d.venueAdapter), type(uint256).max);
+            d.weth.approve(address(d.mockVenue), type(uint256).max);
+            d.usdc.approve(address(d.mockVenue), type(uint256).max);
+            vm.stopPrank();
+
+            vm.startPrank(TAKER2_PERSONA);
+            d.weth.approve(address(d.venueAdapter), type(uint256).max);
+            d.usdc.approve(address(d.venueAdapter), type(uint256).max);
+            d.weth.approve(address(d.mockVenue), type(uint256).max);
+            d.usdc.approve(address(d.mockVenue), type(uint256).max);
+            vm.stopPrank();
+        } else {
+            vm.stopBroadcast();
+
+            vm.startBroadcast(ELPI1_PK);
+            d.weth.approve(address(d.vault), type(uint256).max);
+            d.usdc.approve(address(d.vault), type(uint256).max);
+            d.weth.approve(address(d.venueAdapter), type(uint256).max);
+            d.usdc.approve(address(d.venueAdapter), type(uint256).max);
+            d.weth.approve(address(d.mockVenue), type(uint256).max);
+            d.usdc.approve(address(d.mockVenue), type(uint256).max);
+            d.vault.deposit(address(d.weth), depositAmount);
+            vm.stopBroadcast();
+
+            vm.startBroadcast(ELPI2_PK);
+            d.weth.approve(address(d.venueAdapter), type(uint256).max);
+            d.usdc.approve(address(d.venueAdapter), type(uint256).max);
+            d.weth.approve(address(d.mockVenue), type(uint256).max);
+            d.usdc.approve(address(d.mockVenue), type(uint256).max);
+            vm.stopBroadcast();
+
+            vm.startBroadcast(ELPI3_PK);
+            d.weth.approve(address(d.venueAdapter), type(uint256).max);
+            d.usdc.approve(address(d.venueAdapter), type(uint256).max);
+            d.weth.approve(address(d.mockVenue), type(uint256).max);
+            d.usdc.approve(address(d.mockVenue), type(uint256).max);
+            vm.stopBroadcast();
+
+            vm.startBroadcast(deployer);
+        }
+
+        console.log("LP Uniswap v4 position staged: 25 WETH deposited in V4LiquidityVault");
+        console.log("Pre-approvals configured for LP and Takers.");
     }
 
     function exportConfig(LocalDeployment memory d) public {
@@ -272,23 +422,30 @@ contract DeployLocal is Script {
             "  },\n"
         );
 
-        string memory jsonPart3 = string.concat(
+        string memory p3a = string.concat(
             '  "accounts": {\n',
-            '    "deployer": "',
-            vm.toString(DEPLOYER),
-            '",\n',
-            '    "lp": "',
-            vm.toString(LP_PERSONA),
-            '",\n',
-            '    "taker": "',
-            vm.toString(TAKER_PERSONA),
-            '",\n',
-            '    "feeVault": "',
-            vm.toString(FEE_VAULT),
-            '"\n',
-            "  }\n",
-            "}\n"
+            '    "deployer": "', vm.toString(DEPLOYER), '",\n',
+            '    "lp": "', vm.toString(LP_PERSONA), '",\n',
+            '    "taker": "', vm.toString(TAKER_PERSONA), '",\n'
         );
+        string memory p3b = string.concat(
+            '    "taker2": "', vm.toString(TAKER2_PERSONA), '",\n',
+            '    "maker2": "', vm.toString(ELPI4_ADDR), '",\n',
+            '    "feeVault": "', vm.toString(FEE_VAULT), '",\n',
+            '    "anvilLp": "', vm.toString(ANVIL_LP), '",\n'
+        );
+        string memory p3c = string.concat(
+            '    "anvilTaker": "', vm.toString(ANVIL_TAKER), '",\n',
+            '    "elpi1": "', vm.toString(ELPI1_ADDR), '",\n',
+            '    "elpi2": "', vm.toString(ELPI2_ADDR), '",\n',
+            '    "elpi3": "', vm.toString(ELPI3_ADDR), '",\n'
+        );
+        string memory p3d = string.concat(
+            '    "elpi4": "', vm.toString(ELPI4_ADDR), '",\n',
+            '    "elpi5": "', vm.toString(ELPI5_ADDR), '"\n',
+            "  }\n}\n"
+        );
+        string memory jsonPart3 = string.concat(p3a, p3b, p3c, p3d);
 
         string memory fullJson = string.concat(jsonPart1, jsonPart2, jsonPart3);
         try vm.writeFile("local-anvil.json", fullJson) {
@@ -299,22 +456,28 @@ contract DeployLocal is Script {
     }
 
     function exportEnv(LocalDeployment memory d) internal {
-        string memory env1 = string.concat(
-            "RPC_URL=http://127.0.0.1:8545\n",
-            "CHAIN_ID=8453\n",
+        string memory e1a = string.concat(
+            "RPC_URL=http://127.0.0.1:8545\nCHAIN_ID=8453\n",
             "DEPLOYER_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80\n",
-            "LP_KEY=0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d\n",
-            "TAKER_KEY=0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a\n",
-            "POOL_MANAGER=",
-            vm.toString(address(d.poolManager)),
-            "\n",
-            "VENUE_ADAPTER=",
-            vm.toString(address(d.venueAdapter)),
-            "\n",
-            "OPTION_HOOK=",
-            vm.toString(address(d.hook)),
-            "\n"
+            "LP_KEY=0xb9912f8133b56bb35ebf2baf7a62faa21e0c30f865c4e9abc599aab8bcb7e7fa\n",
+            "TAKER_KEY=0xfdc6e5b4548767f71e2b7b835529510d49436a578dc5b57ede07a2be0866c0b4\n",
+            "TAKER2_KEY=0x4f6640b8640a7981a1c1f13b600f848c860f51a0e33fd445713d21ced84628c5\n"
         );
+        string memory e1b = string.concat(
+            "ELPI1_KEY=0xb9912f8133b56bb35ebf2baf7a62faa21e0c30f865c4e9abc599aab8bcb7e7fa\n",
+            "ELPI2_KEY=0xfdc6e5b4548767f71e2b7b835529510d49436a578dc5b57ede07a2be0866c0b4\n",
+            "ELPI3_KEY=0x4f6640b8640a7981a1c1f13b600f848c860f51a0e33fd445713d21ced84628c5\n",
+            "ELPI4_KEY=0x0f8f6c5bbc9446e503c9ce07b07061dee9df63a7b6dadbfbe4b27a07b73a681c\n",
+            "ELPI5_KEY=0xd2d6c980974d227a149ba5b49dc9c01d355f03d991bf53fd00d2ed27e2da527c\n"
+        );
+        string memory e1c = string.concat(
+            "ANVIL_LP_KEY=0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d\n",
+            "ANVIL_TAKER_KEY=0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a\n",
+            "POOL_MANAGER=", vm.toString(address(d.poolManager)), "\n",
+            "VENUE_ADAPTER=", vm.toString(address(d.venueAdapter)), "\n",
+            "OPTION_HOOK=", vm.toString(address(d.hook)), "\n"
+        );
+        string memory env1 = string.concat(e1a, e1b, e1c);
 
         string memory env2 = string.concat(
             "V4_LIQUIDITY_VAULT=",

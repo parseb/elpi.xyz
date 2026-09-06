@@ -54,7 +54,16 @@ export interface DeploymentConfig {
     deployer: string;
     lp: string;
     taker: string;
+    taker2?: string;
+    maker2?: string;
     feeVault: string;
+    anvilLp?: string;
+    anvilTaker?: string;
+    elpi1?: string;
+    elpi2?: string;
+    elpi3?: string;
+    elpi4?: string;
+    elpi5?: string;
   };
 }
 
@@ -114,6 +123,24 @@ export interface StatusResult {
     wethReserve: string;
     wbtcReserve: string;
   };
+  v4Vault?: {
+    address: string;
+    owner: string;
+    lpRouter: string;
+    tickLower: number;
+    tickUpper: number;
+    liquidWeth: string;
+    stagedPoolManagerWeth: string;
+    pendingAssetWeth: string;
+  };
+  uniswapV4?: {
+    routeId: string;
+    currency0: string;
+    currency1: string;
+    fee: number;
+    tickSpacing: number;
+    hooks: string;
+  };
   personas: BalanceEntry[];
 }
 
@@ -137,7 +164,30 @@ export class DevConsole {
     this.config = this.loadConfig(customConfig);
   }
 
+  private loadDotEnv(filePath: string): void {
+    if (fs.existsSync(filePath)) {
+      try {
+        const content = fs.readFileSync(filePath, "utf8");
+        for (const line of content.split("\n")) {
+          const trimmed = line.trim();
+          if (trimmed && !trimmed.startsWith("#")) {
+            const idx = trimmed.indexOf("=");
+            if (idx > 0) {
+              const key = trimmed.slice(0, idx).trim();
+              const val = trimmed.slice(idx + 1).trim();
+              if (!process.env[key]) {
+                process.env[key] = val;
+              }
+            }
+          }
+        }
+      } catch {}
+    }
+  }
+
   private loadConfig(customConfig?: Partial<DeploymentConfig>): DeploymentConfig {
+    this.loadDotEnv(path.resolve(process.cwd(), ".local.env"));
+
     const configPath = path.resolve(process.cwd(), "local-anvil.json");
     let loaded: Partial<DeploymentConfig> = {};
 
@@ -218,13 +268,61 @@ export class DevConsole {
       },
       accounts: {
         deployer: loaded.accounts?.deployer || "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
-        lp: loaded.accounts?.lp || "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-        taker: loaded.accounts?.taker || "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
-        feeVault: loaded.accounts?.feeVault || "0x90F79bf6EB2c4f870365E785982E1f101E93b906",
+        lp: loaded.accounts?.lp || loaded.accounts?.elpi1 || "0xf85B008086EA4f59f17aE9E0665962a1e45c7855",
+        taker: loaded.accounts?.taker || loaded.accounts?.elpi2 || "0x61755DF0a398ee315bcC077d99B5eaC7c73ca813",
+        taker2: loaded.accounts?.taker2 || loaded.accounts?.elpi3 || "0xEB1b98c730a0fA3F3419cb201D343D509767865b",
+        maker2: loaded.accounts?.maker2 || loaded.accounts?.elpi4 || "0x4A60DB79Eede5e98f8b71f78D1b6d311ECDD8885",
+        feeVault: loaded.accounts?.feeVault || loaded.accounts?.elpi5 || "0x6C02839e831b680aB61D5De8AfF676e9a878e825",
+        elpi1: loaded.accounts?.elpi1 || "0xf85B008086EA4f59f17aE9E0665962a1e45c7855",
+        elpi2: loaded.accounts?.elpi2 || "0x61755DF0a398ee315bcC077d99B5eaC7c73ca813",
+        elpi3: loaded.accounts?.elpi3 || "0xEB1b98c730a0fA3F3419cb201D343D509767865b",
+        elpi4: loaded.accounts?.elpi4 || "0x4A60DB79Eede5e98f8b71f78D1b6d311ECDD8885",
+        elpi5: loaded.accounts?.elpi5 || "0x6C02839e831b680aB61D5De8AfF676e9a878e825",
+        anvilLp: loaded.accounts?.anvilLp || "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        anvilTaker: loaded.accounts?.anvilTaker || "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
         ...loaded.accounts,
         ...customConfig?.accounts,
       },
     };
+  }
+
+  public resolveRecipient(recipientInput: string): string {
+    const lower = recipientInput.toLowerCase().trim();
+    const acc = this.config.accounts;
+    if (lower === "lp" || lower === "elpi1" || lower === "alice") {
+      return acc.elpi1 || acc.lp;
+    }
+    if (lower === "taker" || lower === "taker1" || lower === "elpi2" || lower === "bob") {
+      return acc.elpi2 || acc.taker;
+    }
+    if (lower === "taker2" || lower === "elpi3" || lower === "charlie") {
+      return acc.elpi3 || acc.taker2 || acc.taker;
+    }
+    if (lower === "maker2" || lower === "lp2" || lower === "elpi4") {
+      return acc.elpi4 || acc.maker2 || acc.lp;
+    }
+    if (lower === "feevault" || lower === "fee" || lower === "elpi5") {
+      return acc.elpi5 || acc.feeVault;
+    }
+    if (lower === "deployer" || lower === "admin" || lower === "gov") {
+      return acc.deployer;
+    }
+    if (lower === "anvillp") {
+      return acc.anvilLp || "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
+    }
+    if (lower === "anviltaker") {
+      return acc.anvilTaker || "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC";
+    }
+    if (lower === "vault" || lower === "v4vault") {
+      return this.config.contracts.v4LiquidityVault;
+    }
+    if (lower === "pm" || lower === "poolmanager") {
+      return this.config.contracts.poolManager;
+    }
+    if (lower === "venue" || lower === "mockvenue") {
+      return this.config.contracts.mockSettlementVenue;
+    }
+    return recipientInput;
   }
 
   // ─── RPC Helpers ─────────────────────────────────────────────────────────────
@@ -478,14 +576,52 @@ export class DevConsole {
       }
     }
 
-    // 3. Inspect Personas
+    // 3. Inspect V4 Liquidity Vault & Staged Liquidity
+    const vaultAddr = this.config.contracts.v4LiquidityVault;
+    let v4VaultStatus: StatusResult["v4Vault"] = undefined;
+    if (vaultAddr && vaultAddr !== "0x0000000000000000000000000000000000000000") {
+      try {
+        const owner = this.castCall(vaultAddr, "owner()(address)");
+        const lpRouter = this.castCall(vaultAddr, "lpRouter()(address)");
+        const tickLower = parseInt(this.castCall(vaultAddr, "tickLower()(int24)"), 10) || 600;
+        const tickUpper = parseInt(this.castCall(vaultAddr, "tickUpper()(int24)"), 10) || 1200;
+        const liquidWeth = await this.getTokenBalance(this.config.tokens.WETH.address, vaultAddr, 18);
+        const stagedPmWeth = await this.getTokenBalance(
+          this.config.tokens.WETH.address,
+          this.config.contracts.poolManager,
+          18
+        );
+        const rawPending = this.castCall(vaultAddr, "pendingAsset(address)(uint256)", this.config.tokens.WETH.address);
+        const pendingAssetWeth = (Number(BigInt(rawPending)) / 1e18).toFixed(4);
+
+        v4VaultStatus = {
+          address: vaultAddr,
+          owner,
+          lpRouter,
+          tickLower,
+          tickUpper,
+          liquidWeth,
+          stagedPoolManagerWeth: stagedPmWeth,
+          pendingAssetWeth,
+        };
+      } catch {
+        // Vault inspect fallback
+      }
+    }
+
+    // 4. Inspect Personas & Protocol Accounts
     const personas: BalanceEntry[] = [];
     const accounts = [
+      { name: "LP / Maker (elpi1)", address: this.config.accounts.elpi1 || this.config.accounts.lp },
+      { name: "Taker 1 (elpi2)", address: this.config.accounts.elpi2 || this.config.accounts.taker },
+      { name: "Taker 2 (elpi3)", address: this.config.accounts.elpi3 || this.config.accounts.taker2 || "" },
+      { name: "Secondary LP (elpi4)", address: this.config.accounts.elpi4 || this.config.accounts.maker2 || "" },
+      { name: "Fee Vault (elpi5)", address: this.config.accounts.elpi5 || this.config.accounts.feeVault },
       { name: "Deployer / Admin", address: this.config.accounts.deployer },
-      { name: "LP / Maker", address: this.config.accounts.lp },
-      { name: "Taker / Trader", address: this.config.accounts.taker },
-      { name: "Fee Vault", address: this.config.accounts.feeVault },
       { name: "V4 Liquidity Vault", address: this.config.contracts.v4LiquidityVault },
+      { name: "V4 PoolManager", address: this.config.contracts.poolManager },
+      { name: "Anvil LP (0x7099)", address: this.config.accounts.anvilLp || "" },
+      { name: "Anvil Taker (0x3C44)", address: this.config.accounts.anvilTaker || "" },
     ];
 
     for (const acc of accounts) {
@@ -513,6 +649,8 @@ export class DevConsole {
       isoDate: new Date(timestamp * 1000).toISOString(),
       prices,
       venue: venueStatus,
+      v4Vault: v4VaultStatus,
+      uniswapV4: this.config.uniswapV4,
       personas,
     };
   }
@@ -520,6 +658,7 @@ export class DevConsole {
   // ─── Token Mint / Faucet ──────────────────────────────────────────────────────
 
   public async mint(assetInput: string, recipient: string, amountInput: string): Promise<string> {
+    const resolvedRecipient = this.resolveRecipient(recipient);
     const asset = assetInput.toUpperCase();
     const token =
       asset === "WETH"
@@ -535,7 +674,7 @@ export class DevConsole {
     }
 
     const rawUnits = this.parseUnits(amountInput, token.decimals);
-    const tx = this.castSend(token.address, "mint(address,uint256)", recipient, rawUnits.toString());
+    const tx = this.castSend(token.address, "mint(address,uint256)", resolvedRecipient, rawUnits.toString());
     return tx;
   }
 
@@ -641,6 +780,63 @@ export async function mintTokens(asset: string, recipient: string, amount: strin
   return getInstance().mint(asset, recipient, amount.toString());
 }
 
+// ─── Launch Dashboard ─────────────────────────────────────────────────────────
+
+async function printLaunchDashboard(instance: DevConsole): Promise<void> {
+  console.log("\n==========================================================================================================");
+  console.log("  elpi (elpi.xyz) × Uniswap v4 Development & Testing Console");
+  console.log(`  RPC Target: ${instance.rpcUrl}  |  Chain ID: ${instance.config.chainId}`);
+  console.log("==========================================================================================================");
+
+  try {
+    const s = await instance.getStatus();
+
+    console.log(`\n─── Mock Personas & Test Accounts ────────────────────────────────────────────────────────────────────────`);
+    console.log(`  LP / Maker (elpi1)     : ${instance.config.accounts.elpi1 || instance.config.accounts.lp} (staged in V4 vault)`);
+    console.log(`  Taker 1 (elpi2)        : ${instance.config.accounts.elpi2 || instance.config.accounts.taker} (funded with pre-approvals)`);
+    console.log(`  Taker 2 (elpi3)        : ${instance.config.accounts.elpi3 || instance.config.accounts.taker2 || "N/A"} (funded with pre-approvals)`);
+    console.log(`  Secondary LP (elpi4)   : ${instance.config.accounts.elpi4 || instance.config.accounts.maker2 || "N/A"}`);
+    console.log(`  Fee Vault (elpi5)      : ${instance.config.accounts.elpi5 || instance.config.accounts.feeVault}`);
+    console.log(`  Deployer / Admin       : ${instance.config.accounts.deployer}`);
+
+    if (s.v4Vault) {
+      console.log(`\n─── Uniswap v4 Liquidity Vault & Staged Position ─────────────────────────────────────────────────────────`);
+      console.log(`  Vault Contract  : ${s.v4Vault.address}`);
+      console.log(`  Vault Owner     : ${s.v4Vault.owner}`);
+      console.log(`  Tick Range      : [${s.v4Vault.tickLower}, ${s.v4Vault.tickUpper}] (single-sided WETH collateral)`);
+      console.log(`  Staged Liquidity: ${s.v4Vault.stagedPoolManagerWeth} WETH (in PoolManager) + ${s.v4Vault.liquidWeth} WETH (loose vault balance)`);
+      if (s.v4Vault.pendingAssetWeth !== "0.0000") {
+        console.log(`  Pending Restake : ${s.v4Vault.pendingAssetWeth} WETH`);
+      }
+    }
+
+    console.log(`\n─── Spot Oracles & Freshness ─────────────────────────────────────────────────────────────────────────────`);
+    for (const p of s.prices) {
+      const statusBadge = p.isFresh
+        ? `\x1b[32m[FRESH]\x1b[0m (age: ${p.ageSeconds}s)`
+        : `\x1b[31m[STALE]\x1b[0m (age: ${p.ageSeconds}s, max: ${MAX_PRICE_AGE_SECONDS}s)`;
+      console.log(`  ${p.asset.padEnd(5)}: $${p.priceUsd.padStart(9)}  ${statusBadge}  (${p.oracleAddress})`);
+    }
+
+    console.log(`\n─── Persona & Vault Balances ─────────────────────────────────────────────────────────────────────────────`);
+    console.log(
+      `  ${"Persona / Role".padEnd(24)} ${"Address".padEnd(44)} ${"ETH".padEnd(10)} ${"WETH".padEnd(12)} ${"WBTC".padEnd(10)} ${"USDC".padEnd(12)}`
+    );
+    console.log(`  ${"─".repeat(116)}`);
+    for (const p of s.personas) {
+      console.log(
+        `  ${p.name.padEnd(24)} ${p.address.padEnd(44)} ${p.eth.padEnd(10)} ${p.weth.padEnd(12)} ${p.wbtc.padEnd(10)} ${p.usdc.padEnd(12)}`
+      );
+    }
+  } catch (err) {
+    console.warn(`[WARN] Could not retrieve initial chain status: ${(err as Error).message}`);
+  }
+
+  console.log("\n==========================================================================================================");
+  console.log("  Quick Commands: price weth 3200 | advance 1h | refresh | mint usdc 1000 elpi2 | status | quotes | help");
+  console.log("==========================================================================================================\n");
+}
+
 // ─── Interactive REPL & CLI Runner ─────────────────────────────────────────────
 
 async function runCli(): Promise<void> {
@@ -653,12 +849,8 @@ async function runCli(): Promise<void> {
     process.exit(0);
   }
 
-  // Interactive REPL Mode
-  console.log("\n========================================================");
-  console.log("  elpi (elpi.xyz) × Uniswap v4 Development Console");
-  console.log("  RPC Target: " + consoleInstance.rpcUrl);
-  console.log("  Type 'help' for available commands, 'exit' to quit.");
-  console.log("========================================================\n");
+  // Display initial mock addresses and data on launch
+  await printLaunchDashboard(consoleInstance);
 
   const rl = readline.createInterface({
     input: process.stdin,
@@ -745,6 +937,29 @@ async function handleCommand(instance: DevConsole, parts: string[]): Promise<voi
         console.log(`  ${p.asset.padEnd(5)}: $${p.priceUsd.padStart(9)}  ${statusBadge}  oracle: ${p.oracleAddress}`);
       }
 
+      if (s.uniswapV4) {
+        console.log(`\n─── Uniswap v4 Pool Parameters ───────────────────────────`);
+        console.log(`  Route ID     : ${s.uniswapV4.routeId}`);
+        const c0Symbol = s.uniswapV4.currency0.toLowerCase() === instance.config.tokens.WETH.address.toLowerCase() ? "WETH" : "USDC";
+        const c1Symbol = s.uniswapV4.currency1.toLowerCase() === instance.config.tokens.WETH.address.toLowerCase() ? "WETH" : "USDC";
+        console.log(`  Currency0    : ${s.uniswapV4.currency0} (${c0Symbol})`);
+        console.log(`  Currency1    : ${s.uniswapV4.currency1} (${c1Symbol})`);
+        console.log(`  Pool Fee     : ${s.uniswapV4.fee} (Dynamic Fee Flag / 0x800000)`);
+        console.log(`  Tick Spacing : ${s.uniswapV4.tickSpacing}`);
+        console.log(`  Hook Address : ${s.uniswapV4.hooks}`);
+      }
+
+      if (s.v4Vault) {
+        console.log(`\n─── Uniswap v4 Liquidity Vault & Staged Position ─────────`);
+        console.log(`  Vault Address: ${s.v4Vault.address}`);
+        console.log(`  Owner (LP)   : ${s.v4Vault.owner}`);
+        console.log(`  Router       : ${s.v4Vault.lpRouter}`);
+        console.log(`  Tick Range   : [${s.v4Vault.tickLower}, ${s.v4Vault.tickUpper}]`);
+        console.log(`  Staged in PM : ${s.v4Vault.stagedPoolManagerWeth} WETH`);
+        console.log(`  Liquid WETH  : ${s.v4Vault.liquidWeth} WETH`);
+        console.log(`  Pending Asset: ${s.v4Vault.pendingAssetWeth} WETH`);
+      }
+
       console.log(`\n─── Settlement Venue State ───────────────────────────────`);
       console.log(`  Venue Address   : ${s.venue.address}`);
       console.log(`  Exchange Rate   : ${s.venue.rateNumerator} / ${s.venue.rateDenominator} (~${s.venue.effectiveWethRate} USDC/WETH)`);
@@ -752,15 +967,42 @@ async function handleCommand(instance: DevConsole, parts: string[]): Promise<voi
 
       console.log(`\n─── Persona & Vault Balances ─────────────────────────────`);
       console.log(
-        `  ${"Name".padEnd(20)} ${"Address".padEnd(42)} ${"ETH".padEnd(10)} ${"WETH".padEnd(12)} ${"WBTC".padEnd(10)} ${"USDC".padEnd(12)}`
+        `  ${"Name".padEnd(24)} ${"Address".padEnd(44)} ${"ETH".padEnd(10)} ${"WETH".padEnd(12)} ${"WBTC".padEnd(10)} ${"USDC".padEnd(12)}`
       );
-      console.log(`  ${"─".repeat(110)}`);
+      console.log(`  ${"─".repeat(116)}`);
       for (const p of s.personas) {
         console.log(
-          `  ${p.name.padEnd(20)} ${p.address.padEnd(42)} ${p.eth.padEnd(10)} ${p.weth.padEnd(12)} ${p.wbtc.padEnd(10)} ${p.usdc.padEnd(12)}`
+          `  ${p.name.padEnd(24)} ${p.address.padEnd(44)} ${p.eth.padEnd(10)} ${p.weth.padEnd(12)} ${p.wbtc.padEnd(10)} ${p.usdc.padEnd(12)}`
         );
       }
       console.log("");
+      break;
+    }
+
+    case "quotes": {
+      const quotesPath = path.resolve(process.cwd(), "script/output/seeded-quotes.json");
+      if (!fs.existsSync(quotesPath)) {
+        console.log("No seeded quotes found. Run './dev.sh seed' or 'bash script/seed-liquidity.sh'.");
+        return;
+      }
+      try {
+        const raw = fs.readFileSync(quotesPath, "utf8");
+        const data = JSON.parse(raw);
+        console.log(`\n─── Seeded Backer Quotes (ERC-1271 Verified) ─────────────`);
+        console.log(`  Generated At: ${data.isoDate} (${data.timestamp})`);
+        console.log(`  Vault       : ${data.vault}`);
+        console.log(`  Signer (LP) : ${data.lpOwner}\n`);
+        for (const q of data.quotes) {
+          const status = q.erc1271Valid ? "\x1b[32m[VALID ERC-1271]\x1b[0m" : "\x1b[31m[INVALID]\x1b[0m";
+          console.log(`  ${q.id} ${status}`);
+          console.log(`    Type: ${q.type} | Strike: $${q.strikeUsd} | Premium: $${q.premiumUsd} | Capacity: ${q.capacityFormatted}`);
+          console.log(`    Expiry: ${q.expiryDate} (${q.expiry})`);
+          console.log(`    Digest: ${q.digest}`);
+          console.log(`    Signature: ${q.signature.slice(0, 22)}...${q.signature.slice(-12)}\n`);
+        }
+      } catch (err) {
+        console.error(`Failed to read quotes: ${(err as Error).message}`);
+      }
       break;
     }
 
@@ -768,14 +1010,16 @@ async function handleCommand(instance: DevConsole, parts: string[]): Promise<voi
     case "mint": {
       if (parts.length < 3) {
         console.log("Usage: mint <asset> <amount> [recipient]");
-        console.log("Example: mint weth 10 0x70997970C51812dc3A010C7d01b50e0d17dc79C8");
+        console.log("Examples: mint weth 10 elpi2 | mint usdc 50000 elpi1 | mint wbtc 2 elpi3");
+        console.log("Aliases: elpi1, elpi2, elpi3, elpi4, elpi5, lp, taker, taker2, deployer, vault, pm");
         return;
       }
       const asset = parts[1];
       const amount = parts[2];
-      const recipient = parts[3] || instance.config.accounts.deployer;
-      await instance.mint(asset, recipient, amount);
-      console.log(`\x1b[32m[MINT]\x1b[0m Minted ${amount} ${asset.toUpperCase()} to ${recipient}`);
+      const rawRecipient = parts[3] || "deployer";
+      const resolved = instance.resolveRecipient(rawRecipient);
+      await instance.mint(asset, rawRecipient, amount);
+      console.log(`\x1b[32m[MINT]\x1b[0m Minted ${amount} ${asset.toUpperCase()} to ${rawRecipient} (${resolved})`);
       break;
     }
 
@@ -784,8 +1028,9 @@ async function handleCommand(instance: DevConsole, parts: string[]): Promise<voi
       console.log(`  price <asset> <val>     : Atomic price & venue rate sync (e.g. price weth 3200, price weth +5%)`);
       console.log(`  advance <duration>      : Fast-forward EVM clock (e.g. advance 1h, advance 30m, advance 2d)`);
       console.log(`  refresh                 : Clear oracle staleness by stamping current block.timestamp`);
-      console.log(`  status                  : Display chain state, spot prices, freshness, and persona balances`);
-      console.log(`  mint <asset> <amt> [to] : Mint mock tokens to specified address (or deployer)`);
+      console.log(`  status                  : Display chain state, spot prices, v4 vault position, and persona balances`);
+      console.log(`  quotes                  : Inspect active seeded quotes with ERC-1271 validation status`);
+      console.log(`  mint <asset> <amt> [to] : Mint mock tokens to specified address or persona alias (e.g. elpi1, elpi2)`);
       console.log(`  help                    : Show this help manual`);
       console.log(`  exit / quit             : Exit the console\n`);
       break;

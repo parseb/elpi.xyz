@@ -13,6 +13,7 @@ import {OptionSettlementHook} from "../src/hooks/OptionSettlementHook.sol";
 import {V4LiquidityVault} from "../src/periphery/V4LiquidityVault.sol";
 
 /// @title DeployV4Stack
+/// @author parseb
 /// @notice End-to-end deployment script for elpi (elpi.xyz) × Uniswap v4 on Base mainnet / local testnets.
 contract DeployV4Stack is Script {
     // ─── Base Mainnet Canonical Addresses ────────────────────────────────────

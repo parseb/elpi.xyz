@@ -34,7 +34,16 @@
   - [x] Wire interactive dark-theme canvas into `app/src/components/MarketChart.tsx`
   - [x] Bind strike / spot price lines, ITM/OTM profit zone indicators, and real-time swap streaming
 - [x] Step 8: Full Verification & Build Gate
-  - [x] **58 / 58 Foundry tests passing** across 13 test suites (`forge test`)
+  - [x] **62 / 62 Foundry tests passing** across 14 test suites (`forge test`)
   - [x] `forge fmt --check` 100% clean
   - [x] `npx tsc --noEmit` 0 errors
   - [x] `npm run build` compiled 7/7 Next.js routes successfully
+- [x] Step 9: Frontend Overhaul & Uniswap Brand Color System
+  - [x] Integrate Uniswap color palette into `tailwind.config.js` (`#FF007A`, `#4C82FB`, `#00D395`, `#FF494A`, `#0D0E15`, `#13141E`, `#98A1C0`)
+  - [x] Add atmospheric ambient radial glow and glassmorphism styling in `globals.css`
+  - [x] Implement Section 6.3 Implied Volatility & Option Greeks in `app/src/lib/premiumEstimation.ts`
+  - [x] Implement Section 9.3 Per-Profile Liquidity Health Monitor in `app/src/app/lp/vault/page.tsx`
+  - [x] Add Protocol Invariants Modal in `app/src/components/InvariantsModal.tsx`
+  - [x] Overhaul `Header.tsx`, `MarketChart.tsx`, `MintFlow.tsx`, `SettlementFlow.tsx`, `page.tsx`, `onboard/page.tsx`
+  - [x] Full build verification: `tsc --noEmit` (0 errors), `npm run build` (7/7 routes passed), `forge test` (62/62 tests passed)
+
