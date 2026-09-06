@@ -1,0 +1,40 @@
+# Tasks: elpi (elpi.xyz) × Uniswap v4 Integration (OH_UNISWAP)
+
+- [x] Step 1: Deployment Automation Script (`script/DeployV4Stack.s.sol`)
+  - [x] Update `script/MineHookSalt.s.sol` for trustedAdapter parameter
+  - [x] Implement `script/DeployV4Stack.s.sol`
+  - [x] Add `test/unit/DeployV4StackTest.t.sol`
+  - [x] Verify script passes unit tests and respects flag `0xC8`
+- [x] Step 2: Continuous Clearing Auction (CCA) & Asset Onboarding Wizard (Milestone UV4)
+  - [x] Implement `app/src/app/api/cca/[auctionId]/route.ts`
+  - [x] Implement `app/src/app/onboard/page.tsx` (Steps 0 to 4)
+  - [x] Create comprehensive onboarding documentation `docs/asset-onboarding-guide.md`
+- [x] Step 3: App Layer Viem Integration & Component Wiring (Milestone UV5)
+  - [x] Implement `app/src/lib/client.ts` with public/wallet clients and `subscribeToPoolSwaps`
+  - [x] Implement `app/src/app/layout.tsx`
+  - [x] Implement `app/src/app/page.tsx` / `app/src/app/trade/page.tsx`
+  - [x] Install npm dependencies and verify `npx tsc --noEmit` & `npm run build`
+- [x] Step 4: Verification & Regression Gate
+  - [x] Implement `test/invariant/UniswapV4Invariant.t.sol` (2048 calls fuzz campaign, 0 reverts)
+  - [x] Implement `test/fork/UniswapV4VenueFork.t.sol`
+  - [x] Implement `test/fork/OptionSettlementHookFork.t.sol`
+  - [x] Implement `test/fork/V4LiquidityVaultFork.t.sol`
+  - [x] Run full `forge test` suite (**51 / 51 tests passed** across 11 test suites)
+  - [x] Run `forge fmt --check` (100% compliant)
+- [x] Step 5: Multi-Backer LPRouter Auto-Restake Support (UV-Q6)
+  - [x] Create `src/interfaces/ILPRouter.sol`
+  - [x] Add `restakeFromRouter(address asset)` to `src/periphery/V4LiquidityVault.sol`
+  - [x] Implement atomic periphery helper `src/periphery/V4LPRouterRestaker.sol`
+  - [x] Add comprehensive unit test suite `test/unit/V4LPRouterRestakerTest.t.sol` (5/5 passing)
+- [x] Step 6: ModuleRegistry Curation Governance Tooling
+  - [x] Implement `script/SubmitCuration.s.sol` with 5-day timelock and hook flag validation
+  - [x] Add unit test suite `test/unit/SubmitCurationTest.t.sol` (2/2 passing)
+- [x] Step 7: TradingView Lightweight-Charts Canvas Integration
+  - [x] Install `lightweight-charts` in `app/`
+  - [x] Wire interactive dark-theme canvas into `app/src/components/MarketChart.tsx`
+  - [x] Bind strike / spot price lines, ITM/OTM profit zone indicators, and real-time swap streaming
+- [x] Step 8: Full Verification & Build Gate
+  - [x] **58 / 58 Foundry tests passing** across 13 test suites (`forge test`)
+  - [x] `forge fmt --check` 100% clean
+  - [x] `npx tsc --noEmit` 0 errors
+  - [x] `npm run build` compiled 7/7 Next.js routes successfully

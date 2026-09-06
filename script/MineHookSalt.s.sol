@@ -16,15 +16,15 @@ import {OptionSettlementHook} from "../src/hooks/OptionSettlementHook.sol";
 ///
 /// The hook address encodes these flags in the lower 14 bits of the address.
 /// This script mines a salt such that:
-///   address(hook) & FLAG_MASK == REQUIRED_FLAGS
+///   address(hook) & FLAG_MASK == REQUIRED_FLAGS (0xC8)
 ///
 /// Usage:
-///   forge script script/MineHookSalt.s.sol --sig "run(address,address)" \
-///     <POOL_MANAGER_ADDR> <OWNER_ADDR>
+///   forge script script/MineHookSalt.s.sol --sig "run(address,address,address)" \
+///     <POOL_MANAGER_ADDR> <OWNER_ADDR> <ADAPTER_ADDR>
 ///
 /// Output: the salt and the expected hook address. Deploy with:
 ///   forge create src/hooks/OptionSettlementHook.sol:OptionSettlementHook \
-///     --constructor-args <POOL_MANAGER> <OWNER> \
+///     --constructor-args <POOL_MANAGER> <OWNER> <ADAPTER> \
 ///     --create2-salt <SALT>
 contract MineHookSalt is Script {
     // Hook flag bits (Uniswap v4 Hooks.sol encoding)
@@ -32,11 +32,12 @@ contract MineHookSalt is Script {
     uint160 constant AFTER_SWAP_FLAG = 1 << 6;
     uint160 constant BEFORE_SWAP_RETURNS_DELTA_FLAG = 1 << 3;
 
-    uint160 constant REQUIRED_FLAGS = BEFORE_SWAP_FLAG | AFTER_SWAP_FLAG | BEFORE_SWAP_RETURNS_DELTA_FLAG;
+    uint160 constant REQUIRED_FLAGS = BEFORE_SWAP_FLAG | AFTER_SWAP_FLAG | BEFORE_SWAP_RETURNS_DELTA_FLAG; // 0xC8 = 200
 
-    function run(address poolManager, address owner) external view {
-        bytes memory creationCode =
-            abi.encodePacked(type(OptionSettlementHook).creationCode, abi.encode(IPoolManager(poolManager), owner));
+    function run(address poolManager, address owner, address adapter) external view {
+        bytes memory creationCode = abi.encodePacked(
+            type(OptionSettlementHook).creationCode, abi.encode(IPoolManager(poolManager), owner, adapter)
+        );
         bytes32 codeHash = keccak256(creationCode);
 
         address deployer = msg.sender;
@@ -45,7 +46,7 @@ contract MineHookSalt is Script {
         console.log("Mining CREATE2 salt for OptionSettlementHook...");
         console.log("Required flag bits (lower 14 bits of address):", REQUIRED_FLAGS);
 
-        for (uint256 salt = 0; salt < 200_000; salt++) {
+        for (uint256 salt = 0; salt < 500_000; salt++) {
             bytes32 saltBytes = bytes32(salt);
             address predicted = _computeAddress(deployer, saltBytes, codeHash);
 
@@ -58,7 +59,7 @@ contract MineHookSalt is Script {
         }
 
         if (found == 0) {
-            console.log("No salt found in 200k iterations -- increase search range.");
+            console.log("No salt found in 500k iterations -- increase search range.");
         }
     }
 

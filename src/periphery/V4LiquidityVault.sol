@@ -13,6 +13,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {ILPSettlementHook} from "../interfaces/ILPSettlementHook.sol";
 import {IERC1271} from "../interfaces/IERC1271.sol";
+import {ILPRouter} from "../interfaces/ILPRouter.sol";
 
 /// @title V4LiquidityVault
 /// @author parseb
@@ -191,6 +192,25 @@ contract V4LiquidityVault is ILPSettlementHook, IERC1271, IUnlockCallback {
         pendingAsset[asset] = 0;
         _addLiquidity(asset, amount);
         emit ManualRestaked(asset, amount);
+    }
+
+    /// @notice Withdraws any claimable payout from LPRouter and restakes it into the v4 pool (UV-Q6).
+    ///         Callable by anyone (vault owner, router restaker helper, or automated keeper bot).
+    /// @param asset The token asset to withdraw and restake
+    function restakeFromRouter(address asset) external {
+        uint256 beforeBal = IERC20(asset).balanceOf(address(this));
+        ILPRouter(lpRouter).withdraw(asset);
+        uint256 received = IERC20(asset).balanceOf(address(this)) - beforeBal;
+        if (received > 0) {
+            pendingAsset[asset] += received;
+            bool success = true;
+            try this._restake(asset, received) {
+                pendingAsset[asset] -= received;
+            } catch {
+                success = false;
+            }
+            emit RestakeAttempted(asset, received, success);
+        }
     }
 
     // ─── IERC1271 ─────────────────────────────────────────────────────────────

@@ -18,7 +18,7 @@ interface IERC6551Account {
 /// @title OptionSettlementHook
 /// @author parseb
 /// @notice Uniswap v4 hook attached to the canonical option settlement pool.
-///         Provides three capabilities to OptionCore:
+///         Provides three capabilities to elpi (elpi.xyz):
 ///           1. Zero-fee waiver for PositionAccount settlement swaps (I4 protection).
 ///           2. Sender verification: only PositionAccounts get the waiver.
 ///           3. Internal flow netting: opposing flows in the same tx bypass the AMM curve

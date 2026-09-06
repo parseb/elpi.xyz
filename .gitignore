@@ -1,4 +1,63 @@
-artefacts
+# ==============================================================================
+# Foundry / Solidity Compilation & Execution
+# ==============================================================================
 out/
-out
+cache/
+cache_forge/
+broadcast/
+artifacts/
+artefacts/
+
+# ==============================================================================
+# Node, Next.js & Web App
+# ==============================================================================
+node_modules/
+**/node_modules/
+.next/
+**/.next/
+*.tsbuildinfo
+**/*.tsbuildinfo
+.turbo/
+build/
+dist/
+coverage/
+
+# Package manager logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# ==============================================================================
+# Environment & Local Secrets
+# ==============================================================================
 .env
+.env.*
+!.env.example
+!.env*.example
+*.local.env
+.local.env
+
+# ==============================================================================
+# Local Devnet & Ephemeral Runtime State
+# ==============================================================================
+local-anvil.json
+*.log
+
+# ==============================================================================
+# Embedded Git Subtrees / Reference Repos
+# ==============================================================================
+lib/reference/
+
+# ==============================================================================
+# OS & Editor
+# ==============================================================================
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/

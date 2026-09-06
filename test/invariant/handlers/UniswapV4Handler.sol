@@ -27,18 +27,28 @@ contract UniswapV4Handler is Test {
     bytes32 public routeId;
     PoolKey public dummyKey;
 
+    uint256 public constant MOCK_SWAP_OUTPUT = 1e18;
+
     constructor() {
-        poolManager = new MockPoolManager(0);
+        poolManager = new MockPoolManager(MOCK_SWAP_OUTPUT);
         adapter = new UniswapV4VenueAdapter(address(poolManager));
-        hook = new OptionSettlementHook(IPoolManager(address(poolManager)), owner, address(0));
+        hook = new OptionSettlementHook(IPoolManager(address(poolManager)), owner, address(adapter));
 
         tokenA = new TestERC20("TokenA", "TKNA", 18);
         tokenB = new TestERC20("TokenB", "TKNB", 18);
 
+        // Ensure token ordering (currency0 < currency1)
+        if (address(tokenA) > address(tokenB)) {
+            TestERC20 temp = tokenA;
+            tokenA = tokenB;
+            tokenB = temp;
+        }
+
+        // Canonical dynamic-fee pool key matching Invariant I4 requirements
         dummyKey = PoolKey({
             currency0: Currency.wrap(address(tokenA)),
             currency1: Currency.wrap(address(tokenB)),
-            fee: 3000,
+            fee: 0x800000, // DYNAMIC_FEE_FLAG required for hook-attached pool
             tickSpacing: 60,
             hooks: hook
         });
@@ -48,11 +58,11 @@ contract UniswapV4Handler is Test {
         routeId = keccak256(abi.encode(dummyKey));
         adapter.registerRoute(dummyKey, "");
 
-        // Give adapter initial funds for the mock pool manager swap to take
+        // Fund poolManager so take() can transfer tokenOut to recipients
         tokenA.mint(address(poolManager), type(uint128).max);
         tokenB.mint(address(poolManager), type(uint128).max);
-        tokenA.mint(address(adapter), type(uint128).max);
-        tokenB.mint(address(adapter), type(uint128).max);
+
+        // Note: Adapter starts with and MUST retain 0 balance (Invariant I1)
     }
 
     // ─── Actions ───────────────────────────────────────────────────────────
@@ -71,7 +81,7 @@ contract UniswapV4Handler is Test {
         try adapter.swap(tokenIn, tokenOut, amountIn, 0, block.timestamp, routeId) {
             // Success
         } catch {
-            // Revert is fine, just exploring paths
+            // Revert is fine, exploring state space
         }
         vm.stopPrank();
     }
@@ -81,7 +91,7 @@ contract UniswapV4Handler is Test {
         SwapParams memory params = SwapParams({zeroForOne: true, amountSpecified: int256(amount), sqrtPriceLimitX96: 0});
 
         // Ensure caller is NOT a known position manager
-        vm.assume(msg.sender != owner);
+        vm.assume(msg.sender != owner && msg.sender != address(adapter));
         vm.startPrank(msg.sender);
 
         vm.expectRevert(abi.encodeWithSelector(OptionSettlementHook.InvalidOptionAccount.selector, msg.sender));
@@ -116,7 +126,7 @@ contract UniswapV4Handler is Test {
         vm.startPrank(caller);
         tokenA.approve(address(vault), amount);
 
-        // Ensure this doesn't revert (as mandated by spec)
+        // Ensure this doesn't revert (Invariant I3 best-effort design principle)
         try vault.onPositionSettled(1, address(tokenA), amount) {}
         catch {
             revert("onPositionSettled reverted");

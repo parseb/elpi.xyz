@@ -11,7 +11,7 @@ import {IHooks} from "@uniswap/v4-core/src/interfaces/IHooks.sol";
 import {IERC1271} from "../../src/interfaces/IERC1271.sol";
 import {ILPSettlementHook} from "../../src/interfaces/ILPSettlementHook.sol";
 
-// ─── Mocks to simulate OptionCore interactions ─────────────────────────────
+// ─── Mocks to simulate elpi (elpi.xyz) interactions ─────────────────────────
 
 contract MockLPRouter {
     function simulateMatchAndMint(V4LiquidityVault vault, address asset, uint256 amount) external {
@@ -27,7 +27,7 @@ contract MockPositionAccount {
         // Send funds to vault (representing LP payout)
         TestERC20(asset).mint(address(vault), amount);
 
-        // Notify vault via try/catch with gas limit to simulate OptionCore safety
+        // Notify vault via try/catch with gas limit to simulate elpi (elpi.xyz) safety
         try ILPSettlementHook(address(vault)).onPositionSettled{gas: 300000}(routeId, asset, amount) {
             // Success
         } catch {
@@ -162,7 +162,7 @@ contract LPRouterV4VaultTest is Test {
         // Since we are mocking the PositionAccount call with a constant limit,
         // the *external* view of the gas used by the PositionAccount might differ slightly
         // based on return data copying, but the try/catch isolates the failure.
-        // In the real OptionCore, `gasIsIdentical` is proven by the GAS.md spec.
+        // In elpi (elpi.xyz), `gasIsIdentical` is proven by the GAS.md spec.
         // We assert that the call succeeds in both cases.
         assertEq(vault.pendingAsset(address(token)), amount); // Failed call left pending
     }
