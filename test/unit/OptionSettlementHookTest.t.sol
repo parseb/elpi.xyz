@@ -33,7 +33,7 @@ contract OptionSettlementHookTest is Test {
         poolManager = new MockPoolManager(0);
 
         vm.prank(owner);
-        hook = new OptionSettlementHook(IPoolManager(address(poolManager)), owner);
+        hook = new OptionSettlementHook(IPoolManager(address(poolManager)), owner, address(0));
 
         vm.prank(owner);
         hook.addPositionManager(knownPM);

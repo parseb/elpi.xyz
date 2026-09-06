@@ -1,1 +1,4 @@
 artefacts
+out/
+out
+.env

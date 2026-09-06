@@ -30,7 +30,7 @@ contract UniswapV4Handler is Test {
     constructor() {
         poolManager = new MockPoolManager(0);
         adapter = new UniswapV4VenueAdapter(address(poolManager));
-        hook = new OptionSettlementHook(IPoolManager(address(poolManager)), owner);
+        hook = new OptionSettlementHook(IPoolManager(address(poolManager)), owner, address(0));
 
         tokenA = new TestERC20("TokenA", "TKNA", 18);
         tokenB = new TestERC20("TokenB", "TKNB", 18);
