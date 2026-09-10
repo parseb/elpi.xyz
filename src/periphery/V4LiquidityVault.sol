@@ -183,22 +183,20 @@ contract V4LiquidityVault is ILPSettlementHook, IERC1271, IUnlockCallback {
 
     // ─── LPRouter integration ─────────────────────────────────────────────────
 
-    /// @notice Remove v4 liquidity so LPRouter can pull raw ERC-20 via transferFrom
-    ///         at matchAndMint time. The extracted amount sits as a loose ERC-20
-    ///         balance in this vault until LPRouter._pullCollateral calls transferFrom.
+    /// @notice Atomically removes v4 liquidity and transfers raw ERC-20 directly to
+    ///         the authorized LPRouter at matchAndMint time (1-Tx Mint).
     /// @param asset Address of the ERC-20 collateral to extract.
     /// @param amount Amount to extract.
-    /// @dev Two-transaction sequence (v1):
-    ///        tx1: lpRouter calls extractForMint(asset, amount)
-    ///        tx2: matchAndMint executes, pulling ERC-20 from this vault
+    /// @dev Single-transaction atomic extraction (Compromise Architecture):
+    ///      LPRouter calls extractForMint during _pullCollateral in matchAndMint,
+    ///      receiving pure ERC-20 tokens immediately without an approval hop.
     function extractForMint(address asset, uint256 amount) external {
         if (msg.sender != lpRouter) revert OnlyLPRouter();
         if (asset == address(0)) revert ZeroAddress();
         if (amount == 0) revert ZeroAmount();
 
         _removeLiquidity(asset, amount);
-        // Approve LPRouter to pull the now-liquid ERC-20.
-        IERC20(asset).forceApprove(lpRouter, amount);
+        IERC20(asset).safeTransfer(msg.sender, amount);
         emit ExtractedForMint(asset, amount);
     }
 

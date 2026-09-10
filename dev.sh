@@ -6,7 +6,10 @@ set -e
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RPC_PORT=8545
 APP_PORT=3000
-CHAIN_ID=8453
+# Default to 31337 (standard Anvil/Hardhat localhost ID) so external wallets (Rabby, MetaMask)
+# prompt transactions for Anvil instead of defaulting to Base Mainnet (8453).
+# Set CHAIN_ID=8453 ./dev.sh if explicitly testing Base fork mode.
+CHAIN_ID="${CHAIN_ID:-31337}"
 DEPLOYER_KEY="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 
 ANVIL_PID=""
@@ -85,12 +88,13 @@ NEEDS_DEPLOYMENT=false
 if [ ! -f "$DIR/local-anvil.json" ]; then
   NEEDS_DEPLOYMENT=true
 else
-  # Verify configured oracle code exists on chain
+  # Verify configured oracle and position manager code exists on chain
   ORACLE_ADDR=$(grep -o '"wethOracle": "[^"]*"' "$DIR/local-anvil.json" | cut -d'"' -f4 || echo "")
-  if [ -z "$ORACLE_ADDR" ] || [ "$ORACLE_ADDR" = "0x0000000000000000000000000000000000000000" ]; then
+  PM_ADDR=$(grep -o '"positionManager": "[^"]*"' "$DIR/local-anvil.json" | cut -d'"' -f4 || echo "")
+  if [ -z "$ORACLE_ADDR" ] || [ "$ORACLE_ADDR" = "0x0000000000000000000000000000000000000000" ] || [ -z "$PM_ADDR" ] || [ "$PM_ADDR" = "0x0000000000000000000000000000000000000000" ]; then
     NEEDS_DEPLOYMENT=true
   else
-    CODE=$(cast code "$ORACLE_ADDR" --rpc-url "http://127.0.0.1:$RPC_PORT" 2>/dev/null || echo "")
+    CODE=$(cast code "$PM_ADDR" --rpc-url "http://127.0.0.1:$RPC_PORT" 2>/dev/null || echo "")
     if [ -z "$CODE" ] || [ "$CODE" = "0x" ]; then
       NEEDS_DEPLOYMENT=true
     fi

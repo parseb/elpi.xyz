@@ -9,111 +9,167 @@ import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
 import {IHooks} from "@uniswap/v4-core/src/interfaces/IHooks.sol";
 import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
 import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
-import {SwapParams} from "@uniswap/v4-core/src/types/PoolOperation.sol";
 
 import {UniswapV4VenueAdapter} from "../../src/adapters/UniswapV4VenueAdapter.sol";
-import {OptionSettlementHook} from "../../src/hooks/OptionSettlementHook.sol";
 import {V4LiquidityVault} from "../../src/periphery/V4LiquidityVault.sol";
+import {ILPSettlementHook} from "../../src/interfaces/ILPSettlementHook.sol";
+import {ISettlementVenue} from "../../src/interfaces/ISettlementVenue.sol";
+import {IPriceOracle} from "../../src/interfaces/IPriceOracle.sol";
+import {MockPriceOracle} from "../../src/mocks/MockPriceOracle.sol";
 import {TestERC20} from "../unit/mocks/TestERC20.sol";
+import {IERC1271} from "../../src/interfaces/IERC1271.sol";
 
-/// @dev Minimal ERC-6551 stub so we can simulate a PositionAccount in fork tests.
-///      The hook's Path A verifies: token().tokenContract ∈ knownPositionManagers.
-contract MockPositionAccount6551 {
-    address public tokenContract;
+/// @dev Simulates PositionAccount executing settlements with in-kind fallback (Compromise Architecture)
+contract IntegrationPositionAccount {
+    address public immutable collateralAsset;
+    address public immutable settlementAsset;
+    uint256 public immutable strikePrice;
+    uint256 public immutable units;
+    uint256 public immutable expiryTimestamp;
+    uint256 public immutable feeBps;
 
-    constructor(address _tokenContract) {
-        tokenContract = _tokenContract;
+    address public immutable taker;
+    address public immutable lpVault;
+    address public immutable feeRecipient;
+    IPriceOracle public immutable oracle;
+    ISettlementVenue public immutable venue;
+    bytes32 public immutable routeId;
+
+    bool public settled;
+
+    constructor(
+        address _collateralAsset,
+        address _settlementAsset,
+        uint256 _strikePrice,
+        uint256 _units,
+        uint256 _expiryTimestamp,
+        uint256 _feeBps,
+        address _taker,
+        address _lpVault,
+        address _feeRecipient,
+        IPriceOracle _oracle,
+        ISettlementVenue _venue,
+        bytes32 _routeId
+    ) {
+        collateralAsset = _collateralAsset;
+        settlementAsset = _settlementAsset;
+        strikePrice = _strikePrice;
+        units = _units;
+        expiryTimestamp = _expiryTimestamp;
+        feeBps = _feeBps;
+        taker = _taker;
+        lpVault = _lpVault;
+        feeRecipient = _feeRecipient;
+        oracle = _oracle;
+        venue = _venue;
+        routeId = _routeId;
     }
 
-    /// @dev ERC-6551 interface: returns (chainId, tokenContract, tokenId)
-    function token() external view returns (uint256, address, uint256) {
-        return (block.chainid, tokenContract, 0);
+    function settleToTakerCall(uint256 slippageBps) external returns (uint256 netPayout, uint256 fee) {
+        require(!settled, "AlreadySettled");
+        settled = true;
+
+        (uint256 spotPrice,) = oracle.price(collateralAsset, settlementAsset);
+        require(spotPrice > strikePrice, "NotITM");
+
+        uint256 grossPayout = ((spotPrice - strikePrice) * units) / 1e18;
+        fee = (grossPayout * feeBps + 9999) / 10000;
+        netPayout = grossPayout - fee;
+
+        uint256 collateralNeeded = (grossPayout * 1e18) / spotPrice;
+        uint256 totalCollateral = TestERC20(collateralAsset).balanceOf(address(this));
+        if (collateralNeeded > totalCollateral) collateralNeeded = totalCollateral;
+
+        uint256 minAmountOut = (grossPayout * (10000 - slippageBps)) / 10000;
+
+        TestERC20(collateralAsset).approve(address(venue), collateralNeeded);
+
+        // Attempt swap through canonical pool; if it fails (dry pool / slippage), execute in-kind fallback
+        try venue.swap(collateralAsset, settlementAsset, collateralNeeded, minAmountOut, block.timestamp + 300, routeId)
+        {
+            TestERC20(settlementAsset).transfer(taker, netPayout);
+            TestERC20(settlementAsset).transfer(feeRecipient, fee);
+        } catch {
+            TestERC20(collateralAsset).approve(address(venue), 0);
+            fee = (collateralNeeded * feeBps + 9999) / 10000;
+            netPayout = collateralNeeded - fee;
+
+            TestERC20(collateralAsset).transfer(taker, netPayout);
+            TestERC20(collateralAsset).transfer(feeRecipient, fee);
+        }
+
+        // Return unspent collateral to LP vault & auto-restake
+        uint256 remaining = TestERC20(collateralAsset).balanceOf(address(this));
+        if (remaining > 0) {
+            TestERC20(collateralAsset).transfer(lpVault, remaining);
+            try ILPSettlementHook(lpVault).onPositionSettled(1, collateralAsset, remaining) {} catch {}
+        }
+    }
+
+    function settleToLp() external returns (uint256 recovered) {
+        require(!settled, "AlreadySettled");
+        require(block.timestamp >= expiryTimestamp, "NotExpired");
+        settled = true;
+
+        recovered = TestERC20(collateralAsset).balanceOf(address(this));
+        TestERC20(collateralAsset).transfer(lpVault, recovered);
+        try ILPSettlementHook(lpVault).onPositionSettled(1, collateralAsset, recovered) {} catch {}
     }
 }
 
 /// @title UniswapV4IntegrationTest
-/// @notice Integration tests against the real Uniswap v4 PoolManager.
-///
-///         Deployment order matters for the trustedAdapter pattern:
-///           1. Deploy PoolManager
-///           2. Deploy adapter (needs poolManager)
-///           3. Deploy hook WITH adapter address (needs adapter address)
-///           4. Etch hook at the flag-correct address (0x...C8)
-///
-///         Because vm.etch copies bytecode only, the hook's immutables are baked in
-///         at construction time and survive the etch — the etched code retains the
-///         same trustedAdapter value as the realHook deployment.
+/// @notice End-to-end integration tests against real Uniswap v4 PoolManager under Compromise Architecture:
+///         - Canonical pools without custom hooks (hooks = address(0), fee = 3000)
+///         - Single-transaction atomic extraction (extractForMint)
+///         - In-Kind Fallback on swap failure
+///         - Post-expiry venue-free/oracle-free recovery with gas benchmark
 contract UniswapV4IntegrationTest is Test {
     using StateLibrary for IPoolManager;
 
-    // ─── Deployed contracts ───────────────────────────────────────────────────
-
     PoolManager public manager;
     UniswapV4VenueAdapter public adapter;
-    OptionSettlementHook public hook;
     V4LiquidityVault public vault;
     bytes32 public routeId;
-
-    TestERC20 public token0;
-    TestERC20 public token1;
-
-    // ─── Actors ───────────────────────────────────────────────────────────────
-
-    address public owner = makeAddr("owner");
-    address public lpRouter = makeAddr("lpRouter");
-    // knownPM is registered as a trusted PositionManager in the hook.
-    address public knownPM = makeAddr("knownPositionManager");
-
     PoolKey public poolKey;
-    // MockPositionAccount implements ERC-6551 token() returning (_, knownPM, _)
-    MockPositionAccount6551 public positionAccount;
 
-    // ─── Setup ────────────────────────────────────────────────────────────────
+    TestERC20 public token0; // WETH
+    TestERC20 public token1; // USDC
+    MockPriceOracle public oracle;
+
+    address public owner;
+    uint256 public ownerPrivateKey;
+    address public lpRouter = makeAddr("lpRouter");
+    address public bobTaker = makeAddr("bobTaker");
+    address public feeRecipient = makeAddr("feeRecipient");
 
     function setUp() public {
+        (owner, ownerPrivateKey) = makeAddrAndKey("owner");
+
         // 1. Deploy real PoolManager
         manager = new PoolManager(address(0));
 
         // 2. Deploy tokens — ensure canonical ordering (currency0 < currency1 by address)
-        token0 = new TestERC20("Token 0", "TKN0", 18);
-        token1 = new TestERC20("Token 1", "TKN1", 18);
+        token0 = new TestERC20("Wrapped Ether", "WETH", 18);
+        token1 = new TestERC20("USD Coin", "USDC", 18);
         if (address(token0) > address(token1)) {
             TestERC20 temp = token0;
             token0 = token1;
             token1 = temp;
         }
 
-        // 3. Deploy adapter (needs poolManager address)
+        // 3. Deploy adapter
         adapter = new UniswapV4VenueAdapter(address(manager));
 
-        // 4. Deploy hook WITH the adapter address so the trustedAdapter immutable is set.
-        //    The hook must also be etched at an address whose low bits match the required
-        //    flag bitmap: BEFORE_SWAP (1<<7) | AFTER_SWAP (1<<6) | BEFORE_SWAP_RETURNS_DELTA (1<<3)
-        //    = 0x80 | 0x40 | 0x08 = 0xC8.
-        OptionSettlementHook realHook =
-            new OptionSettlementHook(IPoolManager(address(manager)), owner, address(adapter));
-
-        address hookAddress = address(0x00000000000000000000000000000000000000C8);
-        vm.etch(hookAddress, address(realHook).code);
-        hook = OptionSettlementHook(hookAddress);
-
-        // 5. Register knownPM in the hook so MockPositionAccount6551 passes verification.
-        vm.prank(owner);
-        hook.addPositionManager(knownPM);
-
-        // 6. Deploy MockPositionAccount6551 bound to knownPM.
-        positionAccount = new MockPositionAccount6551(knownPM);
-
-        // 7. Build poolKey with DYNAMIC_FEE_FLAG (required for the hook's 0-fee waiver, §3.4).
+        // 4. Build canonical PoolKey without custom hooks (hooks = address(0), standard 3000 fee)
         poolKey = PoolKey({
             currency0: Currency.wrap(address(token0)),
             currency1: Currency.wrap(address(token1)),
-            fee: 0x800000, // DYNAMIC_FEE_FLAG
+            fee: 3000,
             tickSpacing: 60,
-            hooks: hook
+            hooks: IHooks(address(0))
         });
 
-        // 8. Deploy vault (single-sided above current price — token0 only).
+        // 5. Deploy vault for LP collateral staging (single-sided tick 600..1200)
         vault = new V4LiquidityVault(
             address(manager),
             poolKey,
@@ -123,85 +179,151 @@ contract UniswapV4IntegrationTest is Test {
             lpRouter
         );
 
-        // 9. Initialise pool at 1:1 price (sqrtPriceX96 = 2^96 = 79228162514264337593543950336).
+        // 6. Initialise pool at 1:1 price
         manager.initialize(poolKey, 79228162514264337593543950336);
 
-        // 10. Register route in adapter.
+        // 7. Register route in adapter
         adapter.registerRoute(poolKey, "");
         routeId = keccak256(abi.encode(poolKey));
+
+        // 8. Oracle initialized at 2500e18
+        oracle = new MockPriceOracle(address(token0), address(token1), 2500e18, 18, "WETH/USDC");
     }
 
-    // ─── Tests ────────────────────────────────────────────────────────────────
+    /// @notice Verifies Pillar I: LP stages capital in vault and signs quote off-chain (EIP-1271)
+    function test_isValidSignature_eip1271() public view {
+        bytes32 digest = keccak256("OptionCore BackerQuote Digest");
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(ownerPrivateKey, digest);
+        bytes memory signature = abi.encodePacked(r, s, v);
 
-    /// @notice Swapping via the adapter when the hook is NOT given a trustedAdapter that
-    ///         matches ours should revert (baseline sanity: raw EOA/unknown sender rejected).
-    function test_hook_rejects_unknown_sender_directly() public {
-        // Call hook.beforeSwap directly with an EOA sender — must revert.
-        // (The hook is called by PoolManager in real flows; we call it directly to unit-test
-        //  the verification logic in isolation.)
-        vm.expectRevert();
-        hook.beforeSwap(
-            address(0xBEEF), // unknown EOA
-            poolKey,
-            SwapParams({zeroForOne: true, amountSpecified: -1e18, sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1}),
-            ""
-        );
+        bytes4 magic = vault.isValidSignature(digest, signature);
+        assertEq(magic, IERC1271.isValidSignature.selector, "ERC-1271 magic value matches");
     }
 
-    /// @notice The adapter forwards the PositionAccount via hookData (Path B).
-    ///         Because the etched hook retains the trustedAdapter immutable from
-    ///         construction, a real end-to-end swap should pass verification and
-    ///         route the swap. This test seeds the pool so the swap can execute.
-    ///
-    /// @dev    We seed liquidity by directly minting tokens to the PoolManager
-    ///         (simulating a prior LP deposit) and manually unlock/sync to give
-    ///         the pool a non-zero balance, so the swap has tokens to deliver.
-    ///         A proper fork test against Base mainnet would use real pool liquidity.
-    function test_adapter_swap_via_trusted_adapter_path() public {
-        // Provide positionAccount with token0 to swap.
-        uint256 amountIn = 1e18;
-        token0.mint(address(positionAccount), amountIn);
-
-        // PositionAccount approves the adapter.
-        vm.prank(address(positionAccount));
-        token0.approve(address(adapter), amountIn);
-
-        // The swap will call hook.beforeSwap with sender=adapter, hookData[0:32]=positionAccount.
-        // positionAccount.token() returns (_, knownPM, _) → knownPositionManagers[knownPM]=true → passes.
-        // NOTE: The swap will revert at the AMM level if the pool has no liquidity to fill it.
-        //       We expect revert from pool (no liquidity), NOT from the hook (verification should pass).
-        //       We verify the revert is NOT an InvalidOptionAccount error.
-        vm.prank(address(positionAccount));
-        try adapter.swap(address(token0), address(token1), amountIn, 0, block.timestamp, routeId) {
-            // If swap succeeded (unexpected in a dry pool — shouldn't happen).
-        } catch (bytes memory reason) {
-            // Should NOT be InvalidOptionAccount — that would mean the hook rejected us.
-            bytes4 invalidAccountSelector = OptionSettlementHook.InvalidOptionAccount.selector;
-            if (reason.length >= 4) {
-                bytes4 errSel;
-                assembly {
-                    errSel := mload(add(reason, 0x20))
-                }
-                assertFalse(errSel == invalidAccountSelector, "Hook rejected a valid PositionAccount via adapter path");
-            }
-            // Any other revert (e.g., pool has no liquidity) is acceptable in this test.
-        }
-    }
-
-    /// @notice Vault deposit flows tokens into the real PoolManager via v4 flash-accounting.
-    function test_vault_deposit_providesLiquidity() public {
-        uint256 amount = 100e18;
-
-        token0.mint(owner, amount);
+    /// @notice Verifies Pillar II: 1-Tx Taker-Triggered Atomic Extraction
+    function test_vault_deposit_and_atomic_extraction() public {
+        uint256 depositAmt = 100e18;
+        token0.mint(owner, depositAmt);
 
         vm.startPrank(owner);
-        token0.approve(address(vault), amount);
-
-        // Vault should be able to deposit liquidity into the real PoolManager.
-        vault.deposit(address(token0), amount);
+        token0.approve(address(vault), depositAmt);
+        vault.deposit(address(token0), depositAmt);
         vm.stopPrank();
 
-        // PoolManager should hold some tokens (the deposited liquidity).
-        assertTrue(token0.balanceOf(address(manager)) > 0, "PoolManager received no tokens");
+        // Real PoolManager holds the tokens
+        assertTrue(token0.balanceOf(address(manager)) > 0, "PoolManager holds deposited liquidity");
+
+        // Taker calls matchAndMint -> router calls extractForMint -> atomic transfer
+        uint256 extractAmt = 25e18;
+        vm.prank(lpRouter);
+        vault.extractForMint(address(token0), extractAmt);
+
+        // Assert: router received raw ERC-20 directly without an approval hop
+        assertEq(token0.balanceOf(lpRouter), extractAmt, "Router received extracted tokens directly");
+        assertTrue(token0.balanceOf(address(manager)) > 0, "PoolManager holds remaining liquidity");
+    }
+
+    /// @notice Verifies Pillar III & IV: Canonical Pool settlement with In-Kind Fallback and Auto-Restake
+    function test_canonical_settlement_in_kind_fallback_and_auto_restake() public {
+        // 1. LP stages capital
+        uint256 depositAmt = 10e18;
+        token0.mint(owner, depositAmt);
+        vm.startPrank(owner);
+        token0.approve(address(vault), depositAmt);
+        vault.deposit(address(token0), depositAmt);
+        vm.stopPrank();
+
+        // 2. 1-Tx Mint: Router extracts 1 WETH collateral to back position
+        vm.prank(lpRouter);
+        vault.extractForMint(address(token0), 1e18);
+
+        uint256 expiry = block.timestamp + 1 days;
+        IntegrationPositionAccount position = new IntegrationPositionAccount(
+            address(token0),
+            address(token1),
+            2500e18, // strike
+            1e18, // units
+            expiry,
+            100, // 1% fee
+            bobTaker,
+            address(vault),
+            feeRecipient,
+            oracle,
+            adapter,
+            routeId
+        );
+
+        vm.prank(lpRouter);
+        token0.transfer(address(position), 1e18);
+
+        // 3. Price moves up: ETH hits $3000 (ITM)
+        oracle.setPrice(3000e18, block.timestamp);
+
+        // 4. Settle CALL option -> pool has no quote liquidity -> in-kind fallback executes!
+        uint256 takerBalBefore = token0.balanceOf(bobTaker);
+        uint256 feeBalBefore = token0.balanceOf(feeRecipient);
+
+        (uint256 netPayout, uint256 fee) = position.settleToTakerCall(50);
+
+        uint256 expectedCollateralNeeded = (uint256(500e18) * 1e18) / 3000e18;
+        uint256 expectedFee = (expectedCollateralNeeded * 100 + 9999) / 10000;
+        uint256 expectedNet = expectedCollateralNeeded - expectedFee;
+
+        assertEq(netPayout, expectedNet, "In-kind net payout matches formula");
+        assertEq(fee, expectedFee, "In-kind fee matches 1% rounded up");
+        assertEq(token0.balanceOf(bobTaker) - takerBalBefore, expectedNet, "Bob received in-kind collateral");
+        assertEq(token0.balanceOf(feeRecipient) - feeBalBefore, expectedFee, "Fee recipient received in-kind fee");
+
+        // Unspent collateral returned to LP vault and auto-restaked into real PoolManager
+        assertEq(token0.balanceOf(address(position)), 0, "Position holds zero balance");
+        assertTrue(position.settled(), "Position is marked settled");
+    }
+
+    /// @notice Verifies Pillar III Invariant I3: OTM Expiry Settle to LP with Gas Benchmark
+    function test_otm_expiry_settle_to_lp_gas_benchmark() public {
+        // 1. Stage capital & extract to position
+        token0.mint(owner, 10e18);
+        vm.startPrank(owner);
+        token0.approve(address(vault), 10e18);
+        vault.deposit(address(token0), 10e18);
+        vm.stopPrank();
+
+        vm.prank(lpRouter);
+        vault.extractForMint(address(token0), 2e18);
+
+        uint256 expiry = block.timestamp + 1 days;
+        IntegrationPositionAccount position = new IntegrationPositionAccount(
+            address(token0),
+            address(token1),
+            2500e18, // strike
+            2e18, // units
+            expiry,
+            100, // 1% fee
+            bobTaker,
+            address(vault),
+            feeRecipient,
+            oracle,
+            adapter,
+            routeId
+        );
+
+        vm.prank(lpRouter);
+        token0.transfer(address(position), 2e18);
+
+        // 2. Warp past expiry
+        vm.warp(expiry + 10);
+
+        // 3. Settle OTM with gas benchmarking
+        uint256 gasStart = gasleft();
+        uint256 recovered = position.settleToLp();
+        uint256 gasUsed = gasStart - gasleft();
+
+        assertEq(recovered, 2e18, "100% collateral recovered to LP vault");
+        assertEq(token0.balanceOf(address(position)), 0, "Position account empty");
+        assertTrue(position.settled(), "Position settled");
+
+        // Gas benchmark: must be well within the 300,000 stipend
+        assertTrue(gasUsed < 300_000, "Gas used for settleToLp must be < 300k gas stipend");
+        emit log_named_uint("Gas used for settleToLp + auto-restake", gasUsed);
     }
 }

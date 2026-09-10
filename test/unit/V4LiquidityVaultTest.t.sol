@@ -103,7 +103,7 @@ contract V4LiquidityVaultTest is Test {
         vm.stopPrank();
     }
 
-    // ─── T4: extractForMint by lpRouter withdraws and grants allowance ────────
+    // ─── T4: extractForMint by lpRouter withdraws and transfers raw ERC-20 directly ──
 
     function test_extractForMint_success() public {
         uint256 amount = 75e18;
@@ -114,11 +114,9 @@ contract V4LiquidityVaultTest is Test {
 
         vault.extractForMint(address(token), amount);
 
-        // Vault now holds the raw ERC20, not owner
-        assertEq(token.balanceOf(address(vault)), amount);
-
-        // LPRouter should have allowance to pull it
-        assertEq(token.allowance(address(vault), lpRouter), amount);
+        // Vault transfers raw ERC20 directly to lpRouter (msg.sender)
+        assertEq(token.balanceOf(address(vault)), 0);
+        assertEq(token.balanceOf(lpRouter), amount);
     }
 
     // ─── T5: extractForMint from non-lpRouter reverts ─────────────────────────

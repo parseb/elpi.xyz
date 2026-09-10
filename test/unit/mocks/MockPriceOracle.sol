@@ -11,7 +11,5 @@ contract MockPriceOracle is CoreMockPriceOracle {
         uint256 initialPrice_,
         uint8 feedDecimals_,
         string memory description_
-    )
-        CoreMockPriceOracle(collateralAsset_, settlementAsset_, initialPrice_, feedDecimals_, description_)
-    {}
+    ) CoreMockPriceOracle(collateralAsset_, settlementAsset_, initialPrice_, feedDecimals_, description_) {}
 }

@@ -3,3 +3,5 @@
 erc6551-reference/=lib/reference/src/
 forge-std/=lib/forge-std/src/
 v4-core/=lib/v4-core/src/
+optioncore/=artefacts/src/
+

@@ -62,7 +62,7 @@ contract MockPriceOracle is IPriceOracle {
     // ─── IPriceOracle Implementation ──────────────────────────────────────────
 
     /// @inheritdoc IPriceOracle
-    function price(address /*collateralAsset_*/, address /*settlementAsset_*/)
+    function price(address, /*collateralAsset_*/ address /*settlementAsset_*/ )
         external
         view
         override

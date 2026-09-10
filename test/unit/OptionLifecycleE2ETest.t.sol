@@ -8,7 +8,6 @@ import {IHooks} from "@uniswap/v4-core/src/interfaces/IHooks.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 
 import {UniswapV4VenueAdapter} from "../../src/adapters/UniswapV4VenueAdapter.sol";
-import {OptionSettlementHook} from "../../src/hooks/OptionSettlementHook.sol";
 import {V4LiquidityVault} from "../../src/periphery/V4LiquidityVault.sol";
 import {V4LPRouterRestaker} from "../../src/periphery/V4LPRouterRestaker.sol";
 import {ILPSettlementHook} from "../../src/interfaces/ILPSettlementHook.sol";
@@ -121,12 +120,23 @@ contract E2EPositionAccount {
         // Approve venue adapter to pull exact collateralNeeded
         TestERC20(collateralAsset).approve(address(venue), collateralNeeded);
 
-        // Execute swap through UniswapV4VenueAdapter
-        venue.swap(collateralAsset, settlementAsset, collateralNeeded, minAmountOut, block.timestamp + 300, routeId);
+        // Execute swap through UniswapV4VenueAdapter with in-kind fallback
+        try venue.swap(collateralAsset, settlementAsset, collateralNeeded, minAmountOut, block.timestamp + 300, routeId)
+        {
+            // Disburse payouts in settlement asset
+            TestERC20(settlementAsset).transfer(taker, netPayout);
+            TestERC20(settlementAsset).transfer(protocolFeeRecipient, fee);
+        } catch {
+            // In-Kind Fallback: transfer oracle-priced equivalent of underlying collateral asset directly to taker
+            TestERC20(collateralAsset).approve(address(venue), 0);
 
-        // Disburse payouts
-        TestERC20(settlementAsset).transfer(taker, netPayout);
-        TestERC20(settlementAsset).transfer(protocolFeeRecipient, fee);
+            // Calculate in-kind fee and net payout in collateralAsset
+            fee = (collateralNeeded * feeBps + 9999) / 10000;
+            netPayout = collateralNeeded - fee;
+
+            TestERC20(collateralAsset).transfer(taker, netPayout);
+            TestERC20(collateralAsset).transfer(protocolFeeRecipient, fee);
+        }
 
         // Return unspent collateral back to LP vault & notify hook for auto-restake
         uint256 remainingCollateral = TestERC20(collateralAsset).balanceOf(address(this));
@@ -188,7 +198,6 @@ contract E2EPositionAccount {
 ///         LP provision, CALL and PUT settlements, and exact price movement accounting.
 contract OptionLifecycleE2ETest is Test {
     UniswapV4VenueAdapter internal adapter;
-    OptionSettlementHook internal hook;
     V4LiquidityVault internal vaultWeth;
     V4LiquidityVault internal vaultUsdc;
     V4LPRouterRestaker internal restaker;
@@ -228,22 +237,13 @@ contract OptionLifecycleE2ETest is Test {
         poolManager = new MockPoolManager(0);
         adapter = new UniswapV4VenueAdapter(address(poolManager));
 
-        // Deploy hook with trusted adapter
-        OptionSettlementHook realHook =
-            new OptionSettlementHook(IPoolManager(address(poolManager)), owner, address(adapter));
-        address hookAddr = address(0x00000000000000000000000000000000000000C8);
-        vm.etch(hookAddr, address(realHook).code);
-        hook = OptionSettlementHook(hookAddr);
-
-        vm.prank(owner);
-        hook.addPositionManager(positionManager);
-
+        // Canonical Uniswap v4 pool (Compromise Architecture: hooks = address(0), standard 3000 fee)
         poolKey = PoolKey({
             currency0: Currency.wrap(address(weth)),
             currency1: Currency.wrap(address(usdc)),
-            fee: 0x800000, // DYNAMIC_FEE_FLAG
+            fee: 3000,
             tickSpacing: 60,
-            hooks: IHooks(address(hook))
+            hooks: IHooks(address(0))
         });
 
         adapter.registerRoute(poolKey, "");
@@ -335,18 +335,7 @@ contract OptionLifecycleE2ETest is Test {
         assertEq(weth.balanceOf(address(poolManager)), BASE_POOL_WETH + depositWeth - OPTION_UNITS);
         assertEq(usdc.balanceOf(address(poolManager)), BASE_POOL_USDC + depositUsdc - 5000e18);
 
-        // Vaults hold extracted raw ERC-20 with allowance to lpRouter
-        assertEq(weth.balanceOf(address(vaultWeth)), OPTION_UNITS);
-        assertEq(usdc.balanceOf(address(vaultUsdc)), 5000e18);
-        assertEq(weth.allowance(address(vaultWeth), lpRouter), OPTION_UNITS);
-        assertEq(usdc.allowance(address(vaultUsdc), lpRouter), 5000e18);
-
-        // Router pulls the extracted assets
-        vm.prank(lpRouter);
-        weth.transferFrom(address(vaultWeth), lpRouter, OPTION_UNITS);
-        vm.prank(lpRouter);
-        usdc.transferFrom(address(vaultUsdc), lpRouter, 5000e18);
-
+        // 1-Tx Atomic Extraction: Router receives raw ERC-20 directly without approval hop
         assertEq(weth.balanceOf(lpRouter), OPTION_UNITS);
         assertEq(usdc.balanceOf(lpRouter), 5000e18);
         assertEq(weth.balanceOf(address(vaultWeth)), 0);
@@ -382,8 +371,6 @@ contract OptionLifecycleE2ETest is Test {
         // LPRouter extracts 2 WETH from vault to fund PositionAccount
         vm.prank(lpRouter);
         vaultWeth.extractForMint(address(weth), OPTION_UNITS);
-        vm.prank(lpRouter);
-        weth.transferFrom(address(vaultWeth), lpRouter, OPTION_UNITS);
 
         // Staged collateral in PoolManager decreased by 2 WETH (from 10 to 8)
         assertEq(weth.balanceOf(address(poolManager)), BASE_POOL_WETH + 8e18);
@@ -443,7 +430,11 @@ contract OptionLifecycleE2ETest is Test {
             // Total PoolManager WETH: 1,008 (unextracted) + 0.4375 (received via swap) + 1.5625 (restaked) = 1,010 WETH
             assertEq(weth.balanceOf(address(poolManager)), BASE_POOL_WETH + 10e18, "PoolManager holds full 1,010 WETH");
             // PoolManager USDC: paid out 1,400 USDC to service the swap
-            assertEq(usdc.balanceOf(address(poolManager)), BASE_POOL_USDC - 1400e18, "PoolManager USDC decreased by gross swap payout");
+            assertEq(
+                usdc.balanceOf(address(poolManager)),
+                BASE_POOL_USDC - 1400e18,
+                "PoolManager USDC decreased by gross swap payout"
+            );
         }
 
         // ─── Phase 7: LP Position Value & Net Wealth Verification ─────────────
@@ -482,8 +473,6 @@ contract OptionLifecycleE2ETest is Test {
         // Extract 2 WETH for CALL option
         vm.prank(lpRouter);
         vaultWeth.extractForMint(address(weth), OPTION_UNITS);
-        vm.prank(lpRouter);
-        weth.transferFrom(address(vaultWeth), lpRouter, OPTION_UNITS);
 
         uint256 expiry = block.timestamp + 1 days;
         E2EPositionAccount position = _createPosition(
@@ -519,7 +508,9 @@ contract OptionLifecycleE2ETest is Test {
         assertEq(weth.balanceOf(address(vaultWeth)), 0, "Vault loose balance is 0");
 
         // PoolManager WETH balance restored to full initial deposit (1,000 baseline + 10 LP)
-        assertEq(weth.balanceOf(address(poolManager)), BASE_POOL_WETH + initialLpWeth, "100% collateral re-staked in pool");
+        assertEq(
+            weth.balanceOf(address(poolManager)), BASE_POOL_WETH + initialLpWeth, "100% collateral re-staked in pool"
+        );
 
         // Taker accounting: received 0 payout, net loss = premium paid
         assertEq(usdc.balanceOf(bobTaker), bobInitialUsdc - CALL_PREMIUM, "Bob received 0 payout");
@@ -551,8 +542,6 @@ contract OptionLifecycleE2ETest is Test {
 
         vm.prank(lpRouter);
         vaultWeth.extractForMint(address(weth), OPTION_UNITS);
-        vm.prank(lpRouter);
-        weth.transferFrom(address(vaultWeth), lpRouter, OPTION_UNITS);
 
         uint256 expiry = block.timestamp + 1 days;
         E2EPositionAccount position = _createPosition(
@@ -586,7 +575,9 @@ contract OptionLifecycleE2ETest is Test {
 
         // Because PoolManager reverted, auto-restake caught the failure safely (Invariant I3 gas isolation).
         // Proceeds are safely held in vaultWeth and credited to pendingAsset:
-        assertEq(vaultWeth.pendingAsset(address(weth)), OPTION_UNITS, "Post-settlement deposit credited to pendingAsset");
+        assertEq(
+            vaultWeth.pendingAsset(address(weth)), OPTION_UNITS, "Post-settlement deposit credited to pendingAsset"
+        );
         assertEq(weth.balanceOf(address(vaultWeth)), OPTION_UNITS, "Vault safely holds the recovered ERC-20");
 
         // PoolManager becomes available again
@@ -599,7 +590,9 @@ contract OptionLifecycleE2ETest is Test {
         // Post-settlement restake credited into PoolManager
         assertEq(vaultWeth.pendingAsset(address(weth)), 0, "Pending asset cleared after manual restake");
         assertEq(weth.balanceOf(address(vaultWeth)), 0, "Vault loose balance cleared");
-        assertEq(weth.balanceOf(address(poolManager)), BASE_POOL_WETH + initialLpWeth, "Full collateral re-staked in pool");
+        assertEq(
+            weth.balanceOf(address(poolManager)), BASE_POOL_WETH + initialLpWeth, "Full collateral re-staked in pool"
+        );
 
         // LP retains 100% collateral + 100% premium
         assertEq(usdc.balanceOf(aliceLp), CALL_PREMIUM, "LP retained upfront premium");
@@ -637,8 +630,6 @@ contract OptionLifecycleE2ETest is Test {
         // Router extracts 5,000 USDC from vault to fund PositionAccount
         vm.prank(lpRouter);
         vaultUsdc.extractForMint(address(usdc), putCollateral);
-        vm.prank(lpRouter);
-        usdc.transferFrom(address(vaultUsdc), lpRouter, putCollateral);
 
         // Staged collateral in PoolManager decreased by 5,000 USDC (from 25,000 to 20,000)
         assertEq(usdc.balanceOf(address(poolManager)), BASE_POOL_USDC + 20_000e18);
@@ -694,7 +685,11 @@ contract OptionLifecycleE2ETest is Test {
             assertEq(usdc.balanceOf(address(vaultUsdc)), 0, "Vault loose USDC is 0 (all restaked)");
 
             // Staged in PoolManager: Base (1,000,000) + Remaining staged (20,000) + Restaked (3,600) = 1,023,600 USDC
-            assertEq(usdc.balanceOf(address(poolManager)), BASE_POOL_USDC + 23_600e18, "PoolManager credited with restaked USDC");
+            assertEq(
+                usdc.balanceOf(address(poolManager)),
+                BASE_POOL_USDC + 23_600e18,
+                "PoolManager credited with restaked USDC"
+            );
         }
 
         // ─── Phase 7: LP Position Value & Net Wealth Verification ─────────────
@@ -728,8 +723,6 @@ contract OptionLifecycleE2ETest is Test {
         // Extract 5,000 USDC for PUT option
         vm.prank(lpRouter);
         vaultUsdc.extractForMint(address(usdc), putCollateral);
-        vm.prank(lpRouter);
-        usdc.transferFrom(address(vaultUsdc), lpRouter, putCollateral);
 
         uint256 expiry = block.timestamp + 1 days;
         E2EPositionAccount position = _createPosition(
@@ -796,8 +789,6 @@ contract OptionLifecycleE2ETest is Test {
 
         vm.prank(lpRouter);
         vaultUsdc.extractForMint(address(usdc), putCollateral);
-        vm.prank(lpRouter);
-        usdc.transferFrom(address(vaultUsdc), lpRouter, putCollateral);
 
         uint256 expiry = block.timestamp + 1 days;
         E2EPositionAccount position = _createPosition(
@@ -828,7 +819,9 @@ contract OptionLifecycleE2ETest is Test {
         assertEq(recovered, putCollateral, "100% of PUT cash collateral must be returned to LP on OTM");
 
         // Recovery succeeded safely, proceeds safely credited to pendingAsset:
-        assertEq(vaultUsdc.pendingAsset(address(usdc)), putCollateral, "Post-settlement deposit credited to pendingAsset");
+        assertEq(
+            vaultUsdc.pendingAsset(address(usdc)), putCollateral, "Post-settlement deposit credited to pendingAsset"
+        );
         assertEq(usdc.balanceOf(address(vaultUsdc)), putCollateral, "Vault holds recovered USDC");
 
         // PoolManager unblocked
@@ -862,8 +855,6 @@ contract OptionLifecycleE2ETest is Test {
 
         vm.prank(lpRouter);
         vaultWeth.extractForMint(address(weth), OPTION_UNITS);
-        vm.prank(lpRouter);
-        weth.transferFrom(address(vaultWeth), lpRouter, OPTION_UNITS);
 
         uint256 expiry = block.timestamp + 1 days;
         E2EPositionAccount position = _createPosition(
@@ -921,8 +912,6 @@ contract OptionLifecycleE2ETest is Test {
 
             vm.prank(lpRouter);
             vaultWeth.extractForMint(address(weth), OPTION_UNITS);
-            vm.prank(lpRouter);
-            weth.transferFrom(address(vaultWeth), lpRouter, OPTION_UNITS);
 
             uint256 expiry = block.timestamp + 1 days;
             E2EPositionAccount callPos = _createPosition(
@@ -981,8 +970,6 @@ contract OptionLifecycleE2ETest is Test {
 
             vm.prank(lpRouter);
             vaultUsdc.extractForMint(address(usdc), putCollateral);
-            vm.prank(lpRouter);
-            usdc.transferFrom(address(vaultUsdc), lpRouter, putCollateral);
 
             uint256 expiry = block.timestamp + 1 days;
             E2EPositionAccount putPos = _createPosition(
@@ -1040,8 +1027,6 @@ contract OptionLifecycleE2ETest is Test {
         // Extract 2 WETH for CALL option
         vm.prank(lpRouter);
         vaultWeth.extractForMint(address(weth), OPTION_UNITS);
-        vm.prank(lpRouter);
-        weth.transferFrom(address(vaultWeth), lpRouter, OPTION_UNITS);
 
         uint256 expiry = block.timestamp + 1 days;
         E2EPositionAccount position = _createPosition(
@@ -1069,7 +1054,9 @@ contract OptionLifecycleE2ETest is Test {
         position.settleToLp();
 
         // Post-settlement deposit credited to pendingAsset:
-        assertEq(vaultWeth.pendingAsset(address(weth)), OPTION_UNITS, "Post-settlement deposit credited to pendingAsset");
+        assertEq(
+            vaultWeth.pendingAsset(address(weth)), OPTION_UNITS, "Post-settlement deposit credited to pendingAsset"
+        );
         assertEq(weth.balanceOf(address(vaultWeth)), OPTION_UNITS, "Vault holds credited ERC-20 safely");
 
         // Scenario A: Pool recovers -> LP manually restakes
@@ -1079,14 +1066,14 @@ contract OptionLifecycleE2ETest is Test {
 
         assertEq(vaultWeth.pendingAsset(address(weth)), 0, "Pending asset cleared after manual restake");
         assertEq(weth.balanceOf(address(vaultWeth)), 0, "Vault loose balance cleared");
-        assertEq(weth.balanceOf(address(poolManager)), BASE_POOL_WETH + initialLpWeth, "Restaked into pool successfully");
+        assertEq(
+            weth.balanceOf(address(poolManager)), BASE_POOL_WETH + initialLpWeth, "Restaked into pool successfully"
+        );
 
         // Scenario B: LP can also withdraw directly to wallet if desired
         // Simulate extracting 1 WETH and having it fail to restake
         vm.prank(lpRouter);
         vaultWeth.extractForMint(address(weth), 1e18);
-        vm.prank(lpRouter);
-        weth.transferFrom(address(vaultWeth), lpRouter, 1e18);
 
         // Position settles 1 WETH back while poolManager is down
         poolManager.setShouldRevert(true);
@@ -1120,5 +1107,75 @@ contract OptionLifecycleE2ETest is Test {
         vm.prank(aliceLp);
         vaultWeth.withdraw(address(weth), 1e18);
         assertEq(weth.balanceOf(aliceLp), 1e18, "LP withdrew 1 WETH directly to wallet");
+    }
+
+    /// @notice Verifies Pillar III In-Kind Fallback: when a settlement swap fails on the canonical pool,
+    ///         the position automatically disburses oracle-priced equivalent of underlying collateral asset.
+    function test_e2e_call_ITM_swap_failure_executes_in_kind_fallback() public {
+        // 1. LP provides 10 WETH to vault
+        weth.mint(aliceLp, 10e18);
+        vm.prank(aliceLp);
+        weth.approve(address(vaultWeth), 10e18);
+        vm.prank(aliceLp);
+        vaultWeth.deposit(address(weth), 10e18);
+
+        // 2. Mint 1-unit CALL option struck at $2500, expiry 1 day later
+        uint256 expiry = block.timestamp + 1 days;
+        E2EPositionAccount position = _createPosition(
+            999,
+            E2EPositionAccount.OptionType.CALL,
+            address(weth),
+            address(usdc),
+            STRIKE_PRICE,
+            1e18, // 1 WETH unit
+            expiry,
+            address(vaultWeth)
+        );
+
+        // Collateral pulled from LP vault to position account
+        vm.prank(lpRouter);
+        vaultWeth.extractForMint(address(weth), 1e18);
+        vm.prank(lpRouter);
+        weth.transfer(address(position), 1e18);
+
+        // 3. Price moves up: ETH hits $3000 (ITM by $500)
+        oracle.setPrice(3000e18, block.timestamp);
+
+        // Make poolManager swap revert to simulate pool illiquidity or excessive slippage
+        poolManager.setShouldRevert(true);
+
+        uint256 bobWethBefore = weth.balanceOf(bobTaker);
+        uint256 feeWethBefore = weth.balanceOf(protocolFeeRecipient);
+
+        // 4. Settle CALL option -> swap fails -> in-kind fallback executes!
+        (uint256 netPayout, uint256 fee) = position.settleToTakerCall(50); // 0.5% slippage tolerance
+
+        // Verification:
+        // grossPayout = ($3000 - $2500) * 1 = 500 USDC
+        // collateralNeeded = (500e18 * 1e18) / 3000e18 = 0.166666666666666666 WETH
+        // fee = (collateralNeeded * 100 + 9999) / 10000
+        // netPayout = collateralNeeded - fee
+        uint256 expectedCollateralNeeded = (uint256(500e18) * 1e18) / 3000e18;
+        uint256 expectedFee = (expectedCollateralNeeded * 100 + 9999) / 10000;
+        uint256 expectedNet = expectedCollateralNeeded - expectedFee;
+
+        assertEq(netPayout, expectedNet, "In-kind net payout matches formula");
+        assertEq(fee, expectedFee, "In-kind fee matches 1% rounded up");
+
+        assertEq(weth.balanceOf(bobTaker) - bobWethBefore, expectedNet, "Bob received in-kind WETH");
+        assertEq(
+            weth.balanceOf(protocolFeeRecipient) - feeWethBefore, expectedFee, "Fee recipient received in-kind WETH"
+        );
+
+        // Remaining collateral (1 WETH - expectedCollateralNeeded) returned to vault
+        uint256 expectedRemaining = 1e18 - expectedCollateralNeeded;
+        assertEq(weth.balanceOf(address(position)), 0, "Position holds zero balance");
+        // Because poolManager was reverting, auto-restake accumulates in pendingAsset
+        assertEq(
+            vaultWeth.pendingAsset(address(weth)),
+            expectedRemaining,
+            "Unspent collateral returned to LP vault pendingAsset"
+        );
+        assertTrue(position.settled(), "Position is marked settled");
     }
 }

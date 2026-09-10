@@ -28,6 +28,22 @@ ADAPTER=$(jq -r '.contracts.venueAdapter' "$CONFIG_FILE")
 VENUE=$(jq -r '.contracts.mockSettlementVenue' "$CONFIG_FILE")
 WETH_ORACLE=$(jq -r '.contracts.wethOracle' "$CONFIG_FILE")
 WBTC_ORACLE=$(jq -r '.contracts.wbtcOracle' "$CONFIG_FILE")
+POSITION_MANAGER=$(jq -r '.contracts.positionManager' "$CONFIG_FILE")
+LP_ROUTER=$(jq -r '.contracts.lpRouter' "$CONFIG_FILE")
+REGISTRY=$(jq -r '.contracts.erc6551Registry // "0x000000006551c19487814612e58FE06813775758"' "$CONFIG_FILE")
+
+# Guarantee canonical ERC-6551 Registry code on Anvil
+REG_CODE=""
+if [ -f "$DIR/out/ERC6551Registry.sol/ERC6551Registry.json" ]; then
+  REG_CODE=$(jq -r '.deployedBytecode.object' "$DIR/out/ERC6551Registry.sol/ERC6551Registry.json" 2>/dev/null || echo "")
+fi
+if [ -z "$REG_CODE" ] || [ "$REG_CODE" = "null" ]; then
+  REG_CODE=$(cast code "$REGISTRY" --rpc-url "$RPC_URL" 2>/dev/null || echo "")
+fi
+if [ -n "$REG_CODE" ] && [ "$REG_CODE" != "0x" ] && [ "$REG_CODE" != "null" ]; then
+  echo "  Etching canonical ERC6551Registry to 0x000000006551c19487814612e58FE06813775758..."
+  cast rpc anvil_setCode 0x000000006551c19487814612e58FE06813775758 "$REG_CODE" --rpc-url "$RPC_URL" > /dev/null 2>&1 || true
+fi
 
 ELPI1_KEY="0xb9912f8133b56bb35ebf2baf7a62faa21e0c30f865c4e9abc599aab8bcb7e7fa"
 ELPI2_KEY="0xfdc6e5b4548767f71e2b7b835529510d49436a578dc5b57ede07a2be0866c0b4"
@@ -43,6 +59,8 @@ echo "  - Taker 1 (elpi2): $ELPI2_ADDR"
 echo "  - Taker 2 (elpi3): $ELPI3_ADDR"
 echo "  - V4 Vault       : $VAULT"
 echo "  - Pool Manager   : $POOL_MANAGER"
+echo "  - PositionManager: $POSITION_MANAGER"
+echo "  - LPRouter       : $LP_ROUTER"
 
 # ─── 1. Verify / Refresh Allowances ──────────────────────────────────────────
 
@@ -66,21 +84,46 @@ ensure_allowance() {
 }
 
 ensure_allowance "$WETH" "$VAULT" "$ELPI1_ADDR" "$ELPI1_KEY" "V4LiquidityVault"
+ensure_allowance "$WBTC" "$VAULT" "$ELPI1_ADDR" "$ELPI1_KEY" "V4LiquidityVault"
 ensure_allowance "$USDC" "$VAULT" "$ELPI1_ADDR" "$ELPI1_KEY" "V4LiquidityVault"
 ensure_allowance "$WETH" "$ADAPTER" "$ELPI1_ADDR" "$ELPI1_KEY" "VenueAdapter"
+ensure_allowance "$WBTC" "$ADAPTER" "$ELPI1_ADDR" "$ELPI1_KEY" "VenueAdapter"
 ensure_allowance "$USDC" "$ADAPTER" "$ELPI1_ADDR" "$ELPI1_KEY" "VenueAdapter"
 ensure_allowance "$WETH" "$VENUE" "$ELPI1_ADDR" "$ELPI1_KEY" "MockSettlementVenue"
+ensure_allowance "$WBTC" "$VENUE" "$ELPI1_ADDR" "$ELPI1_KEY" "MockSettlementVenue"
 ensure_allowance "$USDC" "$VENUE" "$ELPI1_ADDR" "$ELPI1_KEY" "MockSettlementVenue"
+ensure_allowance "$WETH" "$POSITION_MANAGER" "$ELPI1_ADDR" "$ELPI1_KEY" "PositionManager"
+ensure_allowance "$WBTC" "$POSITION_MANAGER" "$ELPI1_ADDR" "$ELPI1_KEY" "PositionManager"
+ensure_allowance "$USDC" "$POSITION_MANAGER" "$ELPI1_ADDR" "$ELPI1_KEY" "PositionManager"
+ensure_allowance "$WETH" "$LP_ROUTER" "$ELPI1_ADDR" "$ELPI1_KEY" "LPRouter"
+ensure_allowance "$WBTC" "$LP_ROUTER" "$ELPI1_ADDR" "$ELPI1_KEY" "LPRouter"
+ensure_allowance "$USDC" "$LP_ROUTER" "$ELPI1_ADDR" "$ELPI1_KEY" "LPRouter"
 
 ensure_allowance "$WETH" "$ADAPTER" "$ELPI2_ADDR" "$ELPI2_KEY" "VenueAdapter"
+ensure_allowance "$WBTC" "$ADAPTER" "$ELPI2_ADDR" "$ELPI2_KEY" "VenueAdapter"
 ensure_allowance "$USDC" "$ADAPTER" "$ELPI2_ADDR" "$ELPI2_KEY" "VenueAdapter"
 ensure_allowance "$WETH" "$VENUE" "$ELPI2_ADDR" "$ELPI2_KEY" "MockSettlementVenue"
+ensure_allowance "$WBTC" "$VENUE" "$ELPI2_ADDR" "$ELPI2_KEY" "MockSettlementVenue"
 ensure_allowance "$USDC" "$VENUE" "$ELPI2_ADDR" "$ELPI2_KEY" "MockSettlementVenue"
+ensure_allowance "$WETH" "$POSITION_MANAGER" "$ELPI2_ADDR" "$ELPI2_KEY" "PositionManager"
+ensure_allowance "$WBTC" "$POSITION_MANAGER" "$ELPI2_ADDR" "$ELPI2_KEY" "PositionManager"
+ensure_allowance "$USDC" "$POSITION_MANAGER" "$ELPI2_ADDR" "$ELPI2_KEY" "PositionManager"
+ensure_allowance "$WETH" "$LP_ROUTER" "$ELPI2_ADDR" "$ELPI2_KEY" "LPRouter"
+ensure_allowance "$WBTC" "$LP_ROUTER" "$ELPI2_ADDR" "$ELPI2_KEY" "LPRouter"
+ensure_allowance "$USDC" "$LP_ROUTER" "$ELPI2_ADDR" "$ELPI2_KEY" "LPRouter"
 
 ensure_allowance "$WETH" "$ADAPTER" "$ELPI3_ADDR" "$ELPI3_KEY" "VenueAdapter"
+ensure_allowance "$WBTC" "$ADAPTER" "$ELPI3_ADDR" "$ELPI3_KEY" "VenueAdapter"
 ensure_allowance "$USDC" "$ADAPTER" "$ELPI3_ADDR" "$ELPI3_KEY" "VenueAdapter"
 ensure_allowance "$WETH" "$VENUE" "$ELPI3_ADDR" "$ELPI3_KEY" "MockSettlementVenue"
+ensure_allowance "$WBTC" "$VENUE" "$ELPI3_ADDR" "$ELPI3_KEY" "MockSettlementVenue"
 ensure_allowance "$USDC" "$VENUE" "$ELPI3_ADDR" "$ELPI3_KEY" "MockSettlementVenue"
+ensure_allowance "$WETH" "$POSITION_MANAGER" "$ELPI3_ADDR" "$ELPI3_KEY" "PositionManager"
+ensure_allowance "$WBTC" "$POSITION_MANAGER" "$ELPI3_ADDR" "$ELPI3_KEY" "PositionManager"
+ensure_allowance "$USDC" "$POSITION_MANAGER" "$ELPI3_ADDR" "$ELPI3_KEY" "PositionManager"
+ensure_allowance "$WETH" "$LP_ROUTER" "$ELPI3_ADDR" "$ELPI3_KEY" "LPRouter"
+ensure_allowance "$WBTC" "$LP_ROUTER" "$ELPI3_ADDR" "$ELPI3_KEY" "LPRouter"
+ensure_allowance "$USDC" "$LP_ROUTER" "$ELPI3_ADDR" "$ELPI3_KEY" "LPRouter"
 
 echo "✔ Token allowances verified and active."
 
@@ -200,4 +243,10 @@ cat > "$QUOTES_JSON" <<EOF
 EOF
 
 echo "✔ Seeded quotes written to $QUOTES_JSON"
+
+if [ -f "$DIR/script/seed-profiles.mjs" ]; then
+  echo "🖋️  Generating and signing realistic scaled market profiles & quotes..."
+  node "$DIR/script/seed-profiles.mjs"
+fi
+
 echo "🎉 Data and liquidity seeding complete."

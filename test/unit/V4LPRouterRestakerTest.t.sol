@@ -41,6 +41,26 @@ contract MockLPRouterForRestaker is ILPRouter {
         _claimable[backer][asset] += amount;
         emit Credited(1, backer, asset, amount);
     }
+
+    function matchAndMint(
+        BackerAllocation[] calldata,
+        address,
+        address,
+        uint256,
+        uint256,
+        address,
+        address,
+        address,
+        address,
+        bytes32,
+        uint32,
+        uint16,
+        uint16,
+        uint8,
+        bool
+    ) external pure override returns (uint256, address) {
+        return (0, address(0));
+    }
 }
 
 contract V4LPRouterRestakerTest is Test {

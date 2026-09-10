@@ -41,10 +41,10 @@ contract DeployLocalTest is Test {
         // Assert Uniswap v4 stack & liquidity collateralization
         assertTrue(address(d.poolManager) != address(0), "PoolManager zero");
         assertTrue(address(d.venueAdapter) != address(0), "Adapter zero");
-        assertTrue(address(d.hook) != address(0), "Hook zero");
+        assertEq(d.hook, address(0), "Hook must be zero for canonical pool");
         assertTrue(address(d.vault) != address(0), "Vault zero");
         assertEq(d.vault.owner(), deployScript.LP_PERSONA(), "Vault owner mismatch");
-        assertEq(d.vault.lpRouter(), deployScript.DEPLOYER(), "Vault router mismatch");
+        assertEq(d.vault.lpRouter(), address(d.opt.lpRouter), "Vault router mismatch");
 
         // Assert persona balances (LP deposited 25 WETH into vault, leaving 75 WETH liquid)
         assertEq(d.weth.balanceOf(deployScript.LP_PERSONA()), 75 * 1e18, "LP WETH liquid balance");
@@ -61,11 +61,29 @@ contract DeployLocalTest is Test {
         assertEq(d.usdc.balanceOf(deployScript.TAKER2_PERSONA()), 50_000 * 1e6, "Taker 2 USDC balance");
 
         // Assert allowances pre-seeded
-        assertEq(d.weth.allowance(deployScript.LP_PERSONA(), address(d.vault)), type(uint256).max, "LP vault WETH allowance");
-        assertEq(d.weth.allowance(deployScript.TAKER_PERSONA(), address(d.venueAdapter)), type(uint256).max, "Taker adapter WETH allowance");
-        assertEq(d.usdc.allowance(deployScript.TAKER_PERSONA(), address(d.venueAdapter)), type(uint256).max, "Taker adapter USDC allowance");
-        assertEq(d.weth.allowance(deployScript.TAKER2_PERSONA(), address(d.venueAdapter)), type(uint256).max, "Taker 2 adapter WETH allowance");
-        assertEq(d.usdc.allowance(deployScript.TAKER2_PERSONA(), address(d.venueAdapter)), type(uint256).max, "Taker 2 adapter USDC allowance");
+        assertEq(
+            d.weth.allowance(deployScript.LP_PERSONA(), address(d.vault)), type(uint256).max, "LP vault WETH allowance"
+        );
+        assertEq(
+            d.weth.allowance(deployScript.TAKER_PERSONA(), address(d.venueAdapter)),
+            type(uint256).max,
+            "Taker adapter WETH allowance"
+        );
+        assertEq(
+            d.usdc.allowance(deployScript.TAKER_PERSONA(), address(d.venueAdapter)),
+            type(uint256).max,
+            "Taker adapter USDC allowance"
+        );
+        assertEq(
+            d.weth.allowance(deployScript.TAKER2_PERSONA(), address(d.venueAdapter)),
+            type(uint256).max,
+            "Taker 2 adapter WETH allowance"
+        );
+        assertEq(
+            d.usdc.allowance(deployScript.TAKER2_PERSONA(), address(d.venueAdapter)),
+            type(uint256).max,
+            "Taker 2 adapter USDC allowance"
+        );
 
         // Assert raw hash addresses also received token mints
         assertEq(d.weth.balanceOf(deployScript.ELPI1_HASH_ADDR()), 10 * 1e18, "LP hash WETH balance");

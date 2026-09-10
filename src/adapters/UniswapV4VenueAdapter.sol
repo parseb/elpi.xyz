@@ -30,9 +30,9 @@ import {ISettlementVenue} from "../interfaces/ISettlementVenue.sol";
 ///      and _settleToTakerPut (the venue-dependent path). The oracle-free settleToLp path
 ///      never touches this contract.
 ///
-/// @dev Invariant I4: No fee is withheld by this adapter. The OptionSettlementHook
-///      (UV2) provides a 0-fee waiver so AMM fees do not erode the taker payout before
-///      PositionAccount._feeAndPayout applies feeBps.
+/// @dev Invariant I4: The 1% protocol fee (feeBps <= 100) is calculated and withheld directly
+///      by PositionAccount from taker payouts. This adapter executes swaps through canonical
+///      Uniswap v4 pools without custom settlement hooks.
 contract UniswapV4VenueAdapter is ISettlementVenue, IUnlockCallback {
     using SafeERC20 for IERC20;
 
@@ -85,10 +85,6 @@ contract UniswapV4VenueAdapter is ISettlementVenue, IUnlockCallback {
     /// @notice Thrown when an input amount is zero.
     error ZeroAmount();
 
-    /// @notice Thrown when registering a hook pool without DYNAMIC_FEE_FLAG set.
-    /// @param fee The fee configuration lacking 0x800000.
-    error InvalidDynamicFeeFlag(uint24 fee);
-
     /// @notice Emitted when a new route is registered.
     /// @param routeId The keccak256 hash of the PoolKey.
     /// @param key The Uniswap v4 PoolKey.
@@ -124,12 +120,6 @@ contract UniswapV4VenueAdapter is ISettlementVenue, IUnlockCallback {
                 && existing.tickSpacing == key.tickSpacing && address(existing.hooks) == address(key.hooks);
             if (!identical) revert RouteAlreadyRegistered(routeId);
             return; // already registered with same key — no-op
-        }
-
-        // For hook-attached pools (UV2+): enforce DYNAMIC_FEE_FLAG so the hook's
-        // fee override actually takes effect (spec §3.4 caveat, I4 protection).
-        if (address(key.hooks) != address(0)) {
-            if (key.fee & 0x800000 == 0) revert InvalidDynamicFeeFlag(key.fee);
         }
 
         poolKeyOf[routeId] = key;
@@ -205,26 +195,15 @@ contract UniswapV4VenueAdapter is ISettlementVenue, IUnlockCallback {
     ///      `poolManager.swap()`. Because the adapter calls swap() inside unlockCallback,
     ///      `sender` == address(this) (the adapter), NOT the PositionAccount.
     ///
-    ///      Resolution (spec §3.2 intent preserved): the adapter dynamically prepends the
-    ///      PositionAccount address (d.recipient) to the hookData bytes before passing them
-    ///      to poolManager.swap(). The OptionSettlementHook trusts this adapter and decodes
-    ///      the first 32 bytes as the PositionAccount to verify via ERC-6551 introspection.
-    ///
-    ///      Security: this does NOT weaken the security model. Only a genuine
-    ///      poolManager.unlock() context can reach this function (onlyPoolManager guard),
-    ///      and d.recipient is set to msg.sender of the outer swap() call — the real
-    ///      PositionAccount. A caller cannot forge a different recipient without controlling
-    ///      tokenIn transfers from that address (which would fail at safeTransferFrom).
+    /// @dev Executes swap through the canonical v4 pool and delivers tokenOut directly
+    ///      to d.recipient (PositionAccount).
     function unlockCallback(bytes calldata rawData) external override returns (bytes memory) {
         if (msg.sender != address(poolManager)) revert OnlyPoolManager();
 
         SwapCallbackData memory d = abi.decode(rawData, (SwapCallbackData));
         PoolKey memory key = poolKeyOf[d.routeId];
 
-        // Build dynamic hookData: prepend the PositionAccount address so the hook can
-        // verify it via ERC-6551. Concatenated as abi.encode(positionAccount) + storedHookData.
-        bytes memory storedHookData = hookDataOf[d.routeId];
-        bytes memory hData = bytes.concat(abi.encode(d.recipient), storedHookData);
+        bytes memory hData = hookDataOf[d.routeId];
 
         // Determine swap direction. v4 requires currency0 < currency1 by address,
         // so currency0 == tokenIn means we are selling currency0 for currency1.

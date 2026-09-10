@@ -11,7 +11,6 @@ import {Hooks} from "@uniswap/v4-core/src/libraries/Hooks.sol";
 
 import {DeployV4Stack} from "../../script/DeployV4Stack.s.sol";
 import {UniswapV4VenueAdapter} from "../../src/adapters/UniswapV4VenueAdapter.sol";
-import {OptionSettlementHook} from "../../src/hooks/OptionSettlementHook.sol";
 import {V4LiquidityVault} from "../../src/periphery/V4LiquidityVault.sol";
 import {TestERC20} from "./mocks/TestERC20.sol";
 
@@ -29,20 +28,6 @@ contract DeployV4StackTest is Test {
         deployScript = new DeployV4Stack();
         tokenA = new TestERC20("Token A", "TKNA", 18);
         tokenB = new TestERC20("Token B", "TKNB", 18);
-    }
-
-    function test_mineHookSalt_producesCorrectFlags() public view {
-        bytes memory code = abi.encodePacked(
-            type(OptionSettlementHook).creationCode, abi.encode(IPoolManager(address(0x1111)), owner, address(0x2222))
-        );
-
-        (bytes32 salt, address predicted) = deployScript.mineHookSalt(address(deployScript), code);
-        assertTrue(salt != bytes32(0) || salt == bytes32(0), "Salt returned");
-        assertEq(
-            uint160(predicted) & Hooks.ALL_HOOK_MASK,
-            deployScript.REQUIRED_FLAGS(),
-            "Mined hook address must match 0xC8 flag mask"
-        );
     }
 
     function test_deployStack_endToEnd() public {
@@ -63,30 +48,17 @@ contract DeployV4StackTest is Test {
         assertTrue(address(deployed.adapter) != address(0), "Adapter deployed");
         assertEq(address(deployed.adapter.poolManager()), address(deployed.poolManager), "Adapter poolManager match");
 
-        // 3. OptionSettlementHook deployed with required flags & trustedAdapter
-        assertTrue(address(deployed.hook) != address(0), "Hook deployed");
-        assertEq(
-            uint160(address(deployed.hook)) & Hooks.ALL_HOOK_MASK,
-            deployScript.REQUIRED_FLAGS(),
-            "Hook address must satisfy 0xC8 flags"
-        );
-        assertEq(deployed.hook.trustedAdapter(), address(deployed.adapter), "Hook trustedAdapter match");
-        assertEq(deployed.hook.owner(), owner, "Hook owner match");
-
-        // 4. PositionManager whitelisted in hook
-        assertTrue(deployed.hook.knownPositionManagers(positionManager), "PositionManager whitelisted in hook");
-
-        // 5. Route registered in adapter with DYNAMIC_FEE_FLAG
+        // 3. Route registered in adapter with canonical PoolKey (hooks = address(0), standard fee = 3000)
         assertEq(deployed.routeId, keccak256(abi.encode(deployed.poolKey)), "routeId matches poolKey hash");
         (Currency c0, Currency c1, uint24 fee, int24 tickSpacing, IHooks hooks) =
             deployed.adapter.poolKeyOf(deployed.routeId);
         assertEq(Currency.unwrap(c0), Currency.unwrap(deployed.poolKey.currency0));
         assertEq(Currency.unwrap(c1), Currency.unwrap(deployed.poolKey.currency1));
-        assertEq(fee, 0x800000, "DYNAMIC_FEE_FLAG enforced");
-        assertEq(address(hooks), address(deployed.hook), "Hooks match");
+        assertEq(fee, 3000, "Canonical fee 3000 enforced");
+        assertEq(address(hooks), address(0), "No custom hook (hooks == 0)");
         assertEq(tickSpacing, 60, "Tick spacing matches");
 
-        // 6. V4LiquidityVault deployed
+        // 4. V4LiquidityVault deployed
         assertTrue(address(deployed.vault) != address(0), "Vault deployed");
         assertEq(address(deployed.vault.poolManager()), address(deployed.poolManager), "Vault poolManager match");
         assertEq(deployed.vault.owner(), owner, "Vault owner match");
@@ -101,5 +73,6 @@ contract DeployV4StackTest is Test {
         );
 
         assertEq(address(deployed.poolManager), address(existingPm), "Reused existing PoolManager");
+        assertEq(address(deployed.poolKey.hooks), address(0), "Canonical pool has no hook");
     }
 }

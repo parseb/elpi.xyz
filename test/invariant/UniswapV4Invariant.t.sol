@@ -42,9 +42,9 @@ contract UniswapV4InvariantTest is Test {
 
         assertEq(Currency.unwrap(c0), address(handler.tokenA()), "Invariant I2 Violated: currency0 mutated");
         assertEq(Currency.unwrap(c1), address(handler.tokenB()), "Invariant I2 Violated: currency1 mutated");
-        assertEq(fee, 0x800000, "Invariant I2 Violated: dynamic fee mutated");
+        assertEq(fee, 3000, "Invariant I2 Violated: fee mutated");
         assertEq(tickSpacing, 60, "Invariant I2 Violated: tickSpacing mutated");
-        assertEq(address(hooks), address(handler.hook()), "Invariant I2 Violated: hooks mutated");
+        assertEq(address(hooks), address(0), "Invariant I2 Violated: hooks mutated");
     }
 
     /// @notice Invariant I3 (Venue-Free Recovery & Re-stake Isolation):

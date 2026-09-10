@@ -3,28 +3,59 @@ pragma solidity 0.8.26;
 
 /// @title ILPRouter
 /// @author parseb
-/// @notice Minimal interface for LPRouter backer withdrawals and settlement credits in elpi.xyz.
+/// @notice Interface for multi-backer aggregation LPRouter in elpi.xyz.
 interface ILPRouter {
-    /// @notice Emitted when backer settlement proceeds are credited to their claimable ledger.
-    /// @param positionId The position identifier settled.
-    /// @param backer The backer address credited.
-    /// @param asset The token asset address.
-    /// @param amount The credited amount.
+    struct BackerQuote {
+        address backer;
+        address collateralAsset;
+        address settlementAsset;
+        uint16 minHours;
+        uint16 maxHours;
+        uint256 maxUnits;
+        uint256 pricePerUnitPerHour;
+        uint8 supportsOptionType;
+        uint256 unitScalarNum;
+        uint256 unitScalarDen;
+        address oracle;
+        address venue;
+        address arbiter;
+        address condition;
+        bytes32 routeId;
+        uint32 maxPriceAge;
+        uint16 slippageBps;
+        uint256 nonce;
+    }
+
+    struct BackerAllocation {
+        BackerQuote quote;
+        uint256 units;
+        bytes signature;
+    }
+
     event Credited(uint256 indexed positionId, address indexed backer, address indexed asset, uint256 amount);
-
-    /// @notice Emitted when a backer withdraws claimable proceeds.
-    /// @param backer The backer address withdrawing.
-    /// @param asset The token asset address.
-    /// @param amount The withdrawn amount.
     event Withdrawn(address indexed backer, address indexed asset, uint256 amount);
+    event PositionMatched(uint256 indexed positionId, address indexed account, address indexed taker);
+    event BackerContributed(uint256 indexed positionId, address indexed backer, uint256 amount);
 
-    /// @notice Withdraw accumulated claimable settlement proceeds for msg.sender.
-    /// @param asset The token asset address to withdraw.
+    function matchAndMint(
+        BackerAllocation[] calldata allocations,
+        address collateralAsset,
+        address settlementAsset,
+        uint256 unitScalarNum,
+        uint256 unitScalarDen,
+        address oracle,
+        address venue,
+        address arbiter,
+        address condition,
+        bytes32 routeId,
+        uint32 maxPriceAge,
+        uint16 slippageBps,
+        uint16 durationHours,
+        uint8 optionType,
+        bool ackUnverifiedTerms
+    ) external returns (uint256 positionId, address account);
+
     function withdraw(address asset) external;
 
-    /// @notice View claimable settlement proceeds for a backer and asset.
-    /// @param backer The backer address.
-    /// @param asset The token asset address.
-    /// @return The claimable token balance.
     function claimable(address backer, address asset) external view returns (uint256);
 }

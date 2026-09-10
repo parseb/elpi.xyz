@@ -153,6 +153,73 @@ const DEPLOYER_PRIVATE_KEY =
 
 const MAX_PRICE_AGE_SECONDS = 1800; // 30 minutes
 
+export interface DevPersonaKeyInfo {
+  id: string;
+  name: string;
+  role: string;
+  address: string;
+  pk: string;
+}
+
+export const DEV_PERSONA_KEYS: readonly DevPersonaKeyInfo[] = [
+  {
+    id: "elpi1",
+    name: "Alice (elpi1)",
+    role: "LP Vault Owner",
+    address: "0xf85B008086EA4f59f17aE9E0665962a1e45c7855",
+    pk: "0xb9912f8133b56bb35ebf2baf7a62faa21e0c30f865c4e9abc599aab8bcb7e7fa",
+  },
+  {
+    id: "elpi2",
+    name: "Bob (elpi2)",
+    role: "Taker 1 / Buyer",
+    address: "0x61755DF0a398ee315bcC077d99B5eaC7c73ca813",
+    pk: "0xfdc6e5b4548767f71e2b7b835529510d49436a578dc5b57ede07a2be0866c0b4",
+  },
+  {
+    id: "elpi3",
+    name: "Charlie (elpi3)",
+    role: "Taker 2 / Settlement",
+    address: "0xEB1b98c730a0fA3F3419cb201D343D509767865b",
+    pk: "0x4f6640b8640a7981a1c1f13b600f848c860f51a0e33fd445713d21ced84628c5",
+  },
+  {
+    id: "elpi4",
+    name: "Dave (elpi4)",
+    role: "Secondary LP",
+    address: "0x4A60DB79Eede5e98f8b71f78D1b6d311ECDD8885",
+    pk: "0x0f8f6c5bbc9446e503c9ce07b07061dee9df63a7b6dadbfbe4b27a07b73a681c",
+  },
+  {
+    id: "elpi5",
+    name: "Fee Vault (elpi5)",
+    role: "Protocol Governance",
+    address: "0x6C02839e831b680aB61D5De8AfF676e9a878e825",
+    pk: "0xd2d6c980974d227a149ba5b49dc9c01d355f03d991bf53fd00d2ed27e2da527c",
+  },
+  {
+    id: "deployer",
+    name: "Deployer (Anvil #0)",
+    role: "Admin / Deployer",
+    address: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+    pk: "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+  },
+  {
+    id: "anvilLp",
+    name: "Paradigm Desk (Anvil #1)",
+    role: "Secondary LP",
+    address: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+    pk: "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
+  },
+  {
+    id: "anvilTaker",
+    name: "Wintermute (Anvil #2)",
+    role: "Arbitrage Desk",
+    address: "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+    pk: "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a",
+  },
+];
+
 export class DevConsole {
   public config: DeploymentConfig;
   public rpcUrl: string;
@@ -791,13 +858,16 @@ async function printLaunchDashboard(instance: DevConsole): Promise<void> {
   try {
     const s = await instance.getStatus();
 
-    console.log(`\n─── Mock Personas & Test Accounts ────────────────────────────────────────────────────────────────────────`);
-    console.log(`  LP / Maker (elpi1)     : ${instance.config.accounts.elpi1 || instance.config.accounts.lp} (staged in V4 vault)`);
-    console.log(`  Taker 1 (elpi2)        : ${instance.config.accounts.elpi2 || instance.config.accounts.taker} (funded with pre-approvals)`);
-    console.log(`  Taker 2 (elpi3)        : ${instance.config.accounts.elpi3 || instance.config.accounts.taker2 || "N/A"} (funded with pre-approvals)`);
-    console.log(`  Secondary LP (elpi4)   : ${instance.config.accounts.elpi4 || instance.config.accounts.maker2 || "N/A"}`);
-    console.log(`  Fee Vault (elpi5)      : ${instance.config.accounts.elpi5 || instance.config.accounts.feeVault}`);
-    console.log(`  Deployer / Admin       : ${instance.config.accounts.deployer}`);
+    console.log(`\n─── Mock Personas & Private Keys (Import to MetaMask / Wallet) ───────────────────────────────────────────`);
+    console.log(
+      `  ${"Persona / Role".padEnd(28)} ${"Address".padEnd(44)} ${"Private Key"}`
+    );
+    console.log(`  ${"─".repeat(138)}`);
+    for (const p of DEV_PERSONA_KEYS) {
+      const liveAddr =
+        (instance.config.accounts as Record<string, string | undefined>)[p.id] || p.address;
+      console.log(`  ${p.name.padEnd(28)} ${liveAddr.padEnd(44)} \x1b[33m${p.pk}\x1b[0m`);
+    }
 
     if (s.v4Vault) {
       console.log(`\n─── Uniswap v4 Liquidity Vault & Staged Position ─────────────────────────────────────────────────────────`);
@@ -833,7 +903,7 @@ async function printLaunchDashboard(instance: DevConsole): Promise<void> {
   }
 
   console.log("\n==========================================================================================================");
-  console.log("  Quick Commands: price weth 3200 | advance 1h | refresh | mint usdc 1000 elpi2 | status | quotes | help");
+  console.log("  Quick Commands: price weth 3200 | advance 1h | refresh | mint usdc 1000 elpi2 | keys | status | quotes | help");
   console.log("==========================================================================================================\n");
 }
 
@@ -1023,6 +1093,22 @@ async function handleCommand(instance: DevConsole, parts: string[]): Promise<voi
       break;
     }
 
+    case "accounts":
+    case "keys": {
+      console.log(`\n─── Devnet Personas & Private Keys ─────────────────────────────────────────────────────────────────────────`);
+      console.log(
+        `  ${"Persona / Role".padEnd(28)} ${"Address".padEnd(44)} ${"Private Key"}`
+      );
+      console.log(`  ${"─".repeat(138)}`);
+      for (const p of DEV_PERSONA_KEYS) {
+        const liveAddr =
+          (instance.config.accounts as Record<string, string | undefined>)[p.id] || p.address;
+        console.log(`  ${p.name.padEnd(28)} ${liveAddr.padEnd(44)} \x1b[33m${p.pk}\x1b[0m`);
+      }
+      console.log("");
+      break;
+    }
+
     case "help": {
       console.log(`\nAvailable Commands:`);
       console.log(`  price <asset> <val>     : Atomic price & venue rate sync (e.g. price weth 3200, price weth +5%)`);
@@ -1030,6 +1116,7 @@ async function handleCommand(instance: DevConsole, parts: string[]): Promise<voi
       console.log(`  refresh                 : Clear oracle staleness by stamping current block.timestamp`);
       console.log(`  status                  : Display chain state, spot prices, v4 vault position, and persona balances`);
       console.log(`  quotes                  : Inspect active seeded quotes with ERC-1271 validation status`);
+      console.log(`  keys / accounts         : Display all test persona addresses, roles, and private keys`);
       console.log(`  mint <asset> <amt> [to] : Mint mock tokens to specified address or persona alias (e.g. elpi1, elpi2)`);
       console.log(`  help                    : Show this help manual`);
       console.log(`  exit / quit             : Exit the console\n`);

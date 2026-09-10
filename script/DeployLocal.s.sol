@@ -8,13 +8,23 @@ import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
 import {Hooks} from "@uniswap/v4-core/src/libraries/Hooks.sol";
 
+import {IHooks} from "@uniswap/v4-core/src/interfaces/IHooks.sol";
+
 import {UniswapV4VenueAdapter} from "../src/adapters/UniswapV4VenueAdapter.sol";
-import {OptionSettlementHook} from "../src/hooks/OptionSettlementHook.sol";
 import {V4LiquidityVault} from "../src/periphery/V4LiquidityVault.sol";
 
 import {MockERC20} from "../src/mocks/MockERC20.sol";
 import {MockPriceOracle} from "../src/mocks/MockPriceOracle.sol";
 import {MockSettlementVenue} from "../src/mocks/MockSettlementVenue.sol";
+
+import {ERC6551Registry} from "../lib/reference/src/ERC6551Registry.sol";
+import {PositionAccount} from "../src/PositionAccount.sol";
+import {PositionManager} from "../artefacts/src/PositionManager.sol";
+import {LPRouter} from "../artefacts/src/periphery/LPRouter.sol";
+import {AuthzModule} from "../artefacts/src/AuthzModule.sol";
+import {ConditionArbiter} from "../artefacts/src/ConditionArbiter.sol";
+import {ExpiryCondition} from "../artefacts/src/conditions/ExpiryCondition.sol";
+import {TakerProfitCondition} from "../artefacts/src/conditions/TakerProfitCondition.sol";
 
 /// @title DeployLocal
 /// @notice Deterministic local deployment script for elpi x Uniswap v4 with dev console fixtures.
@@ -57,6 +67,17 @@ contract DeployLocal is Script {
     address public constant TAKER2_PERSONA = ELPI3_ADDR;
     address public constant FEE_VAULT = ELPI5_ADDR;
 
+    struct OptionStack {
+        address registry;
+        AuthzModule authzModule;
+        ConditionArbiter conditionArbiter;
+        ExpiryCondition expiryCondition;
+        TakerProfitCondition takerProfitCondition;
+        PositionAccount positionAccount;
+        PositionManager positionManager;
+        LPRouter lpRouter;
+    }
+
     struct LocalDeployment {
         MockERC20 weth;
         MockERC20 wbtc;
@@ -66,26 +87,11 @@ contract DeployLocal is Script {
         MockSettlementVenue mockVenue;
         IPoolManager poolManager;
         UniswapV4VenueAdapter venueAdapter;
-        OptionSettlementHook hook;
+        address hook;
         V4LiquidityVault vault;
         bytes32 routeId;
         PoolKey poolKey;
-    }
-
-    function mineHookSalt(address deployer, bytes memory creationCode)
-        public
-        pure
-        returns (bytes32 salt, address predicted)
-    {
-        bytes32 codeHash = keccak256(creationCode);
-        for (uint256 i = 0; i < 500_000; i++) {
-            bytes32 s = bytes32(i);
-            address target = address(uint160(uint256(keccak256(abi.encodePacked(bytes1(0xff), deployer, s, codeHash)))));
-            if (uint160(target) & Hooks.ALL_HOOK_MASK == REQUIRED_FLAGS) {
-                return (s, target);
-            }
-        }
-        revert("DeployLocal: Failed to mine hook salt within range");
+        OptionStack opt;
     }
 
     function run() external returns (LocalDeployment memory deployed) {
@@ -142,26 +148,7 @@ contract DeployLocal is Script {
         deployed.venueAdapter = new UniswapV4VenueAdapter(address(deployed.poolManager));
         console.log("UniswapV4VenueAdapter deployed at:", address(deployed.venueAdapter));
 
-        // Mine salt and deploy hook via canonical CREATE2 factory (0x4e59b44847b379578588920cA78FbF26c0B4956C)
-        address factory = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
-        if (factory.code.length == 0) {
-            vm.etch(
-                factory,
-                hex"7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3"
-            );
-        }
-
-        bytes memory hookCreationCode = abi.encodePacked(
-            type(OptionSettlementHook).creationCode,
-            abi.encode(deployed.poolManager, deployer, address(deployed.venueAdapter))
-        );
-        (bytes32 salt, address predictedHook) = mineHookSalt(factory, hookCreationCode);
-
-        (bool success, bytes memory returnData) = factory.call(abi.encodePacked(salt, hookCreationCode));
-        require(success && returnData.length == 20, "Hook CREATE2 deployment failed");
-        deployed.hook = OptionSettlementHook(predictedHook);
-
-        _authorizeManagers(deployed.hook, deployer);
+        deployed.hook = address(0);
 
         // Setup route in adapter for WETH/USDC
         (address c0, address c1) = address(deployed.weth) < address(deployed.usdc)
@@ -171,9 +158,9 @@ contract DeployLocal is Script {
         deployed.poolKey = PoolKey({
             currency0: Currency.wrap(c0),
             currency1: Currency.wrap(c1),
-            fee: DYNAMIC_FEE_FLAG,
+            fee: 3000,
             tickSpacing: DEFAULT_TICK_SPACING,
-            hooks: deployed.hook
+            hooks: IHooks(address(0))
         });
 
         try deployed.poolManager.initialize(deployed.poolKey, INITIAL_SQRT_PRICE_1_1) {} catch {}
@@ -181,7 +168,34 @@ contract DeployLocal is Script {
         deployed.routeId = keccak256(abi.encode(deployed.poolKey));
         console.log("Uniswap v4 Route registered. RouteId:", vm.toString(deployed.routeId));
 
-        // 5. Deploy V4LiquidityVault for LP collateral staging
+        // 5. Deploy Option Core & Periphery Stack
+        ERC6551Registry reg = new ERC6551Registry();
+        deployed.opt.registry = address(0x000000006551c19487814612e58FE06813775758);
+        vm.etch(deployed.opt.registry, address(reg).code);
+        console.log("ERC6551Registry deployed and etched at:", deployed.opt.registry);
+
+        deployed.opt.authzModule = new AuthzModule();
+        console.log("AuthzModule deployed at:", address(deployed.opt.authzModule));
+
+        deployed.opt.conditionArbiter = new ConditionArbiter();
+        console.log("ConditionArbiter deployed at:", address(deployed.opt.conditionArbiter));
+
+        deployed.opt.expiryCondition = new ExpiryCondition();
+        console.log("ExpiryCondition deployed at:", address(deployed.opt.expiryCondition));
+
+        deployed.opt.takerProfitCondition = new TakerProfitCondition();
+        console.log("TakerProfitCondition deployed at:", address(deployed.opt.takerProfitCondition));
+
+        deployed.opt.positionAccount = new PositionAccount(address(deployed.opt.authzModule), FEE_VAULT);
+        console.log("PositionAccount implementation deployed at:", address(deployed.opt.positionAccount));
+
+        deployed.opt.positionManager = new PositionManager(address(deployed.opt.positionAccount));
+        console.log("PositionManager deployed at:", address(deployed.opt.positionManager));
+
+        deployed.opt.lpRouter = new LPRouter(address(deployed.opt.positionManager));
+        console.log("LPRouter deployed at:", address(deployed.opt.lpRouter));
+
+        // 6. Deploy V4LiquidityVault for LP collateral staging
         bool isWethCurrency0 = c0 == address(deployed.weth);
         int24 vaultTickLower = isWethCurrency0 ? int24(600) : int24(-1200);
         int24 vaultTickUpper = isWethCurrency0 ? int24(1200) : int24(-600);
@@ -192,38 +206,17 @@ contract DeployLocal is Script {
             vaultTickLower,
             vaultTickUpper,
             LP_PERSONA,
-            DEPLOYER // lpRouter
+            address(deployed.opt.lpRouter)
         );
         console.log("V4LiquidityVault deployed at:", address(deployed.vault));
 
-        // 6. Fund Personas & Gas
+        // 7. Fund Personas & Gas
         _fundAccounts(deployed);
 
-        // 7. Seed LP Uniswap v4 Staged Liquidity Position & Pre-Approvals
+        // 8. Seed LP Uniswap v4 Staged Liquidity Position & Pre-Approvals
         _seedLPAndApprovals(deployed, deployer);
 
         console.log("=== Deployment Complete ===");
-    }
-
-    function _authorizeManagers(OptionSettlementHook hookContract, address deployer) internal {
-        address[7] memory managers = [
-            DEPLOYER,
-            ANVIL_LP,
-            ANVIL_TAKER,
-            ELPI1_ADDR,
-            ELPI2_ADDR,
-            ELPI3_ADDR,
-            ELPI4_ADDR
-        ];
-        bool isBroadcast = vm.isContext(VmSafe.ForgeContext.ScriptBroadcast);
-        for (uint256 i = 0; i < managers.length; i++) {
-            if (!isBroadcast) {
-                vm.prank(deployer);
-                hookContract.addPositionManager(managers[i]);
-            } else {
-                hookContract.addPositionManager(managers[i]);
-            }
-        }
     }
 
     function _fundAccounts(LocalDeployment memory d) internal {
@@ -306,6 +299,10 @@ contract DeployLocal is Script {
             d.usdc.approve(address(d.venueAdapter), type(uint256).max);
             d.weth.approve(address(d.mockVenue), type(uint256).max);
             d.usdc.approve(address(d.mockVenue), type(uint256).max);
+            d.weth.approve(address(d.opt.positionManager), type(uint256).max);
+            d.usdc.approve(address(d.opt.positionManager), type(uint256).max);
+            d.weth.approve(address(d.opt.lpRouter), type(uint256).max);
+            d.usdc.approve(address(d.opt.lpRouter), type(uint256).max);
             d.vault.deposit(address(d.weth), depositAmount);
             vm.stopPrank();
 
@@ -314,6 +311,10 @@ contract DeployLocal is Script {
             d.usdc.approve(address(d.venueAdapter), type(uint256).max);
             d.weth.approve(address(d.mockVenue), type(uint256).max);
             d.usdc.approve(address(d.mockVenue), type(uint256).max);
+            d.weth.approve(address(d.opt.positionManager), type(uint256).max);
+            d.usdc.approve(address(d.opt.positionManager), type(uint256).max);
+            d.weth.approve(address(d.opt.lpRouter), type(uint256).max);
+            d.usdc.approve(address(d.opt.lpRouter), type(uint256).max);
             vm.stopPrank();
 
             vm.startPrank(TAKER2_PERSONA);
@@ -321,6 +322,10 @@ contract DeployLocal is Script {
             d.usdc.approve(address(d.venueAdapter), type(uint256).max);
             d.weth.approve(address(d.mockVenue), type(uint256).max);
             d.usdc.approve(address(d.mockVenue), type(uint256).max);
+            d.weth.approve(address(d.opt.positionManager), type(uint256).max);
+            d.usdc.approve(address(d.opt.positionManager), type(uint256).max);
+            d.weth.approve(address(d.opt.lpRouter), type(uint256).max);
+            d.usdc.approve(address(d.opt.lpRouter), type(uint256).max);
             vm.stopPrank();
         } else {
             vm.stopBroadcast();
@@ -332,6 +337,10 @@ contract DeployLocal is Script {
             d.usdc.approve(address(d.venueAdapter), type(uint256).max);
             d.weth.approve(address(d.mockVenue), type(uint256).max);
             d.usdc.approve(address(d.mockVenue), type(uint256).max);
+            d.weth.approve(address(d.opt.positionManager), type(uint256).max);
+            d.usdc.approve(address(d.opt.positionManager), type(uint256).max);
+            d.weth.approve(address(d.opt.lpRouter), type(uint256).max);
+            d.usdc.approve(address(d.opt.lpRouter), type(uint256).max);
             d.vault.deposit(address(d.weth), depositAmount);
             vm.stopBroadcast();
 
@@ -340,6 +349,10 @@ contract DeployLocal is Script {
             d.usdc.approve(address(d.venueAdapter), type(uint256).max);
             d.weth.approve(address(d.mockVenue), type(uint256).max);
             d.usdc.approve(address(d.mockVenue), type(uint256).max);
+            d.weth.approve(address(d.opt.positionManager), type(uint256).max);
+            d.usdc.approve(address(d.opt.positionManager), type(uint256).max);
+            d.weth.approve(address(d.opt.lpRouter), type(uint256).max);
+            d.usdc.approve(address(d.opt.lpRouter), type(uint256).max);
             vm.stopBroadcast();
 
             vm.startBroadcast(ELPI3_PK);
@@ -347,6 +360,10 @@ contract DeployLocal is Script {
             d.usdc.approve(address(d.venueAdapter), type(uint256).max);
             d.weth.approve(address(d.mockVenue), type(uint256).max);
             d.usdc.approve(address(d.mockVenue), type(uint256).max);
+            d.weth.approve(address(d.opt.positionManager), type(uint256).max);
+            d.usdc.approve(address(d.opt.positionManager), type(uint256).max);
+            d.weth.approve(address(d.opt.lpRouter), type(uint256).max);
+            d.usdc.approve(address(d.opt.lpRouter), type(uint256).max);
             vm.stopBroadcast();
 
             vm.startBroadcast(deployer);
@@ -363,64 +380,59 @@ contract DeployLocal is Script {
     }
 
     function exportJson(LocalDeployment memory d) internal {
-        string memory jsonPart1 = string.concat(
+        string memory jc1 = string.concat(
+            '    "poolManager": "', vm.toString(address(d.poolManager)), '",\n',
+            '    "venueAdapter": "', vm.toString(address(d.venueAdapter)), '",\n',
+            '    "optionSettlementHook": "', vm.toString(address(d.hook)), '",\n'
+        );
+        string memory jc2 = string.concat(
+            '    "v4LiquidityVault": "', vm.toString(address(d.vault)), '",\n',
+            '    "mockSettlementVenue": "', vm.toString(address(d.mockVenue)), '",\n',
+            '    "wethOracle": "', vm.toString(address(d.wethOracle)), '",\n',
+            '    "wbtcOracle": "', vm.toString(address(d.wbtcOracle)), '",\n'
+        );
+        string memory jc3 = string.concat(
+            '    "positionManager": "', vm.toString(address(d.opt.positionManager)), '",\n',
+            '    "lpRouter": "', vm.toString(address(d.opt.lpRouter)), '",\n',
+            '    "positionAccountImplementation": "', vm.toString(address(d.opt.positionAccount)), '",\n',
+            '    "authzModule": "', vm.toString(address(d.opt.authzModule)), '",\n'
+        );
+        string memory jc4 = string.concat(
+            '    "conditionArbiter": "', vm.toString(address(d.opt.conditionArbiter)), '",\n',
+            '    "expiryCondition": "', vm.toString(address(d.opt.expiryCondition)), '",\n',
+            '    "takerProfitCondition": "', vm.toString(address(d.opt.takerProfitCondition)), '",\n',
+            '    "erc6551Registry": "', vm.toString(d.opt.registry), '"\n'
+        );
+        string memory jHead = string.concat(
             "{\n",
-            '  "chainId": 8453,\n',
+            '  "chainId": ', vm.toString(block.chainid), ',\n',
             '  "rpcUrl": "http://127.0.0.1:8545",\n',
-            '  "contracts": {\n',
-            '    "poolManager": "',
-            vm.toString(address(d.poolManager)),
-            '",\n',
-            '    "venueAdapter": "',
-            vm.toString(address(d.venueAdapter)),
-            '",\n',
-            '    "optionSettlementHook": "',
-            vm.toString(address(d.hook)),
-            '",\n',
-            '    "v4LiquidityVault": "',
-            vm.toString(address(d.vault)),
-            '",\n',
-            '    "mockSettlementVenue": "',
-            vm.toString(address(d.mockVenue)),
-            '",\n',
-            '    "wethOracle": "',
-            vm.toString(address(d.wethOracle)),
-            '",\n',
-            '    "wbtcOracle": "',
-            vm.toString(address(d.wbtcOracle)),
-            '"\n',
+            '  "contracts": {\n'
+        );
+        string memory jsonPart1 = string.concat(jHead, jc1, jc2, jc3, jc4, "  },\n");
+
+        string memory jt1 = string.concat(
+            '  "tokens": {\n',
+            '    "WETH": { "address": "', vm.toString(address(d.weth)), '", "decimals": 18, "symbol": "WETH" },\n',
+            '    "WBTC": { "address": "', vm.toString(address(d.wbtc)), '", "decimals": 8, "symbol": "WBTC" },\n'
+        );
+        string memory jt2 = string.concat(
+            '    "USDC": { "address": "', vm.toString(address(d.usdc)), '", "decimals": 6, "symbol": "USDC" }\n',
             "  },\n"
         );
-
-        string memory jsonPart2 = string.concat(
-            '  "tokens": {\n',
-            '    "WETH": { "address": "',
-            vm.toString(address(d.weth)),
-            '", "decimals": 18, "symbol": "WETH" },\n',
-            '    "WBTC": { "address": "',
-            vm.toString(address(d.wbtc)),
-            '", "decimals": 8, "symbol": "WBTC" },\n',
-            '    "USDC": { "address": "',
-            vm.toString(address(d.usdc)),
-            '", "decimals": 6, "symbol": "USDC" }\n',
-            "  },\n",
+        string memory ju1 = string.concat(
             '  "uniswapV4": {\n',
-            '    "routeId": "',
-            vm.toString(d.routeId),
-            '",\n',
-            '    "currency0": "',
-            vm.toString(Currency.unwrap(d.poolKey.currency0)),
-            '",\n',
-            '    "currency1": "',
-            vm.toString(Currency.unwrap(d.poolKey.currency1)),
-            '",\n',
+            '    "routeId": "', vm.toString(d.routeId), '",\n',
+            '    "currency0": "', vm.toString(Currency.unwrap(d.poolKey.currency0)), '",\n',
+            '    "currency1": "', vm.toString(Currency.unwrap(d.poolKey.currency1)), '",\n'
+        );
+        string memory ju2 = string.concat(
             '    "fee": 8388608,\n',
             '    "tickSpacing": 60,\n',
-            '    "hooks": "',
-            vm.toString(address(d.poolKey.hooks)),
-            '"\n',
+            '    "hooks": "', vm.toString(address(d.poolKey.hooks)), '"\n',
             "  },\n"
         );
+        string memory jsonPart2 = string.concat(jt1, jt2, ju1, ju2);
 
         string memory p3a = string.concat(
             '  "accounts": {\n',
@@ -453,60 +465,68 @@ contract DeployLocal is Script {
         } catch {
             console.log("Notice: Unable to write local-anvil.json");
         }
+        try vm.writeFile("app/src/config/local-anvil.json", fullJson) {
+            console.log("Wrote app/src/config/local-anvil.json");
+        } catch {}
     }
 
     function exportEnv(LocalDeployment memory d) internal {
         string memory e1a = string.concat(
-            "RPC_URL=http://127.0.0.1:8545\nCHAIN_ID=8453\n",
+            "RPC_URL=http://127.0.0.1:8545\nCHAIN_ID=", vm.toString(block.chainid), "\n",
             "DEPLOYER_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80\n",
-            "LP_KEY=0xb9912f8133b56bb35ebf2baf7a62faa21e0c30f865c4e9abc599aab8bcb7e7fa\n",
-            "TAKER_KEY=0xfdc6e5b4548767f71e2b7b835529510d49436a578dc5b57ede07a2be0866c0b4\n",
-            "TAKER2_KEY=0x4f6640b8640a7981a1c1f13b600f848c860f51a0e33fd445713d21ced84628c5\n"
+            "LP_KEY=0xb9912f8133b56bb35ebf2baf7a62faa21e0c30f865c4e9abc599aab8bcb7e7fa\n"
         );
         string memory e1b = string.concat(
-            "ELPI1_KEY=0xb9912f8133b56bb35ebf2baf7a62faa21e0c30f865c4e9abc599aab8bcb7e7fa\n",
+            "TAKER_KEY=0xfdc6e5b4548767f71e2b7b835529510d49436a578dc5b57ede07a2be0866c0b4\n",
+            "TAKER2_KEY=0x4f6640b8640a7981a1c1f13b600f848c860f51a0e33fd445713d21ced84628c5\n",
+            "ELPI1_KEY=0xb9912f8133b56bb35ebf2baf7a62faa21e0c30f865c4e9abc599aab8bcb7e7fa\n"
+        );
+        string memory e1c = string.concat(
             "ELPI2_KEY=0xfdc6e5b4548767f71e2b7b835529510d49436a578dc5b57ede07a2be0866c0b4\n",
             "ELPI3_KEY=0x4f6640b8640a7981a1c1f13b600f848c860f51a0e33fd445713d21ced84628c5\n",
             "ELPI4_KEY=0x0f8f6c5bbc9446e503c9ce07b07061dee9df63a7b6dadbfbe4b27a07b73a681c\n",
             "ELPI5_KEY=0xd2d6c980974d227a149ba5b49dc9c01d355f03d991bf53fd00d2ed27e2da527c\n"
         );
-        string memory e1c = string.concat(
+        string memory e1d = string.concat(
             "ANVIL_LP_KEY=0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d\n",
-            "ANVIL_TAKER_KEY=0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a\n",
+            "ANVIL_TAKER_KEY=0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a\n"
+        );
+        string memory env1 = string.concat(e1a, e1b, e1c, e1d);
+
+        string memory e2a = string.concat(
             "POOL_MANAGER=", vm.toString(address(d.poolManager)), "\n",
             "VENUE_ADAPTER=", vm.toString(address(d.venueAdapter)), "\n",
-            "OPTION_HOOK=", vm.toString(address(d.hook)), "\n"
+            "OPTION_HOOK=", vm.toString(address(d.hook)), "\n",
+            "V4_LIQUIDITY_VAULT=", vm.toString(address(d.vault)), "\n"
         );
-        string memory env1 = string.concat(e1a, e1b, e1c);
-
-        string memory env2 = string.concat(
-            "V4_LIQUIDITY_VAULT=",
-            vm.toString(address(d.vault)),
-            "\n",
-            "MOCK_SETTLEMENT_VENUE=",
-            vm.toString(address(d.mockVenue)),
-            "\n",
-            "WETH=",
-            vm.toString(address(d.weth)),
-            "\n",
-            "WBTC=",
-            vm.toString(address(d.wbtc)),
-            "\n",
-            "USDC=",
-            vm.toString(address(d.usdc)),
-            "\n",
-            "WETH_ORACLE=",
-            vm.toString(address(d.wethOracle)),
-            "\n",
-            "WBTC_ORACLE=",
-            vm.toString(address(d.wbtcOracle)),
-            "\n",
-            "ROUTE_ID=",
-            vm.toString(d.routeId),
-            "\n"
+        string memory e2b = string.concat(
+            "MOCK_SETTLEMENT_VENUE=", vm.toString(address(d.mockVenue)), "\n",
+            "WETH=", vm.toString(address(d.weth)), "\n",
+            "WBTC=", vm.toString(address(d.wbtc)), "\n",
+            "USDC=", vm.toString(address(d.usdc)), "\n"
         );
+        string memory e2c = string.concat(
+            "WETH_ORACLE=", vm.toString(address(d.wethOracle)), "\n",
+            "WBTC_ORACLE=", vm.toString(address(d.wbtcOracle)), "\n",
+            "ROUTE_ID=", vm.toString(d.routeId), "\n"
+        );
+        string memory env2 = string.concat(e2a, e2b, e2c);
 
-        string memory fullEnv = string.concat(env1, env2);
+        string memory e3a = string.concat(
+            "POSITION_MANAGER=", vm.toString(address(d.opt.positionManager)), "\n",
+            "LP_ROUTER=", vm.toString(address(d.opt.lpRouter)), "\n",
+            "AUTHZ_MODULE=", vm.toString(address(d.opt.authzModule)), "\n",
+            "CONDITION_ARBITER=", vm.toString(address(d.opt.conditionArbiter)), "\n"
+        );
+        string memory e3b = string.concat(
+            "POSITION_ACCOUNT_IMPL=", vm.toString(address(d.opt.positionAccount)), "\n",
+            "EXPIRY_CONDITION=", vm.toString(address(d.opt.expiryCondition)), "\n",
+            "TAKER_PROFIT_CONDITION=", vm.toString(address(d.opt.takerProfitCondition)), "\n",
+            "ERC6551_REGISTRY=", vm.toString(d.opt.registry), "\n"
+        );
+        string memory env3 = string.concat(e3a, e3b);
+
+        string memory fullEnv = string.concat(env1, env2, env3);
         try vm.writeFile(".local.env", fullEnv) {
             console.log("Wrote .local.env");
         } catch {
@@ -516,43 +536,42 @@ contract DeployLocal is Script {
 
     function exportAppEnv(LocalDeployment memory d) internal {
         string memory appEnv1 = string.concat(
+            "NEXT_PUBLIC_CHAIN_ID=", vm.toString(block.chainid), "\n",
+            "NEXT_PUBLIC_DEV_CHAIN_ID=", vm.toString(block.chainid), "\n",
             "NEXT_PUBLIC_BASE_RPC_URL=http://127.0.0.1:8545\n",
-            "NEXT_PUBLIC_BASE_POOL_MANAGER=",
-            vm.toString(address(d.poolManager)),
-            "\n",
-            "NEXT_PUBLIC_BASE_VENUE_ADAPTER=",
-            vm.toString(address(d.venueAdapter)),
-            "\n",
-            "NEXT_PUBLIC_BASE_OPTION_HOOK=",
-            vm.toString(address(d.hook)),
-            "\n",
-            "NEXT_PUBLIC_BASE_VAULT=",
-            vm.toString(address(d.vault)),
-            "\n"
+            "NEXT_PUBLIC_BASE_POOL_MANAGER=", vm.toString(address(d.poolManager)), "\n"
         );
 
-        string memory appEnv2 = string.concat(
-            "NEXT_PUBLIC_BASE_WETH=",
-            vm.toString(address(d.weth)),
-            "\n",
-            "NEXT_PUBLIC_BASE_WBTC=",
-            vm.toString(address(d.wbtc)),
-            "\n",
-            "NEXT_PUBLIC_BASE_USDC=",
-            vm.toString(address(d.usdc)),
-            "\n",
-            "NEXT_PUBLIC_BASE_CHAINLINK_ETH_USD=",
-            vm.toString(address(d.wethOracle)),
-            "\n",
-            "NEXT_PUBLIC_BASE_MOCK_VENUE=",
-            vm.toString(address(d.mockVenue)),
-            "\n",
-            "NEXT_PUBLIC_BASE_ROUTE_ID=",
-            vm.toString(d.routeId),
-            "\n"
+        string memory a2a = string.concat(
+            "NEXT_PUBLIC_BASE_VENUE_ADAPTER=", vm.toString(address(d.venueAdapter)), "\n",
+            "NEXT_PUBLIC_BASE_OPTION_HOOK=", vm.toString(address(d.hook)), "\n",
+            "NEXT_PUBLIC_BASE_VAULT=", vm.toString(address(d.vault)), "\n",
+            "NEXT_PUBLIC_BASE_WETH=", vm.toString(address(d.weth)), "\n"
         );
+        string memory a2b = string.concat(
+            "NEXT_PUBLIC_BASE_WBTC=", vm.toString(address(d.wbtc)), "\n",
+            "NEXT_PUBLIC_BASE_USDC=", vm.toString(address(d.usdc)), "\n",
+            "NEXT_PUBLIC_BASE_CHAINLINK_ETH_USD=", vm.toString(address(d.wethOracle)), "\n",
+            "NEXT_PUBLIC_BASE_MOCK_VENUE=", vm.toString(address(d.mockVenue)), "\n",
+            "NEXT_PUBLIC_BASE_ROUTE_ID=", vm.toString(d.routeId), "\n"
+        );
+        string memory appEnv2 = string.concat(a2a, a2b);
 
-        string memory fullAppEnv = string.concat(appEnv1, appEnv2);
+        string memory a3a = string.concat(
+            "NEXT_PUBLIC_BASE_POSITION_MANAGER=", vm.toString(address(d.opt.positionManager)), "\n",
+            "NEXT_PUBLIC_BASE_LP_ROUTER=", vm.toString(address(d.opt.lpRouter)), "\n",
+            "NEXT_PUBLIC_BASE_AUTHZ_MODULE=", vm.toString(address(d.opt.authzModule)), "\n",
+            "NEXT_PUBLIC_BASE_CONDITION_ARBITER=", vm.toString(address(d.opt.conditionArbiter)), "\n"
+        );
+        string memory a3b = string.concat(
+            "NEXT_PUBLIC_BASE_POSITION_ACCOUNT_IMPL=", vm.toString(address(d.opt.positionAccount)), "\n",
+            "NEXT_PUBLIC_BASE_EXPIRY_CONDITION=", vm.toString(address(d.opt.expiryCondition)), "\n",
+            "NEXT_PUBLIC_BASE_TAKER_PROFIT_CONDITION=", vm.toString(address(d.opt.takerProfitCondition)), "\n",
+            "NEXT_PUBLIC_BASE_ERC6551_REGISTRY=", vm.toString(d.opt.registry), "\n"
+        );
+        string memory appEnv3 = string.concat(a3a, a3b);
+
+        string memory fullAppEnv = string.concat(appEnv1, appEnv2, appEnv3);
         try vm.writeFile("app/.env.local", fullAppEnv) {
             console.log("Wrote app/.env.local");
         } catch {

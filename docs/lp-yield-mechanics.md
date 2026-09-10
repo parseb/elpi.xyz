@@ -52,18 +52,19 @@ To eliminate impermanent loss while staging collateral:
 
 ## 4. Extraction & Settlement Lifecycle
 
-### 4.1 Extraction for Minting (`extractForMint`)
-1. An LP signs a `BackerQuote` committing collateral from `address(vault)`.
-2. The LP application triggers `vault.extractForMint(asset, amount)`.
-3. The vault calls `poolManager.modifyLiquidity` with negative delta, receives raw ERC-20 tokens, and approves `LPRouter`.
-4. `LPRouter.matchAndMint` executes, pulling pure ERC-20 tokens into the newly derived `PositionAccount`.
+### 4.1 Single-Transaction Atomic Extraction (`extractForMint`)
+1. An LP signs an off-chain EIP-712 `BackerQuote` committing capital staged in `address(vault)` (0 gas, 0 asset movement).
+2. The taker calls `LPRouter.matchAndMint(...)` in a single transaction.
+3. During `_pullCollateral`, `LPRouter` detects the backer is a contract implementing `IV4LiquidityVault` and calls `vault.extractForMint(asset, amount)`.
+4. `V4LiquidityVault` atomically calls `poolManager.modifyLiquidity` with negative delta, extracts the raw ERC-20 tokens, and transfers them directly to `msg.sender` (`lpRouter`) without an approval hop.
+5. `LPRouter` receives the pure ERC-20 tokens and deposits them into the newly created `PositionAccount`, locking collateral as isolated tokens (Invariant I1).
 
 ### 4.2 Auto Re-Staking (`onPositionSettled`)
 When any settlement path completes (`settleToTaker`, `settleToLp`, or `mutualUnwind`):
 1. `PositionAccount._notifyLp` calls `ILPSettlementHook(vault).onPositionSettled(positionId, asset, amount)`.
-2. `V4LiquidityVault` attempts to re-deposit the proceeds into the configured Uniswap v4 pool via `_addLiquidity`.
+2. `V4LiquidityVault` attempts to re-deposit the proceeds into the configured canonical Uniswap v4 pool via `_addLiquidity`.
 3. If the re-stake succeeds, the capital immediately begins earning AMM fees again.
-4. If re-staking fails (e.g. pool pause or temporary gas constraint), proceeds remain in `pendingAsset[asset]`.
+4. If re-staking fails (e.g. pool pause or temporary gas constraint), proceeds safely accumulate in `pendingAsset[asset]`.
 
 ### 4.3 Manual Recovery (`manualRestake`)
 If automated re-staking is interrupted, funds are never lost:
@@ -76,4 +77,4 @@ If automated re-staking is interrupted, funds are never lost:
 
 1. **Vault Bug Blast Radius:** A vulnerability in `V4LiquidityVault` affects only the specific LP using that vault. Other LPs and active `PositionAccount` agreements are completely unaffected (I1 isolation).
 2. **Rebasing / Fee-on-Transfer Tokens:** Rebasing or fee-on-transfer tokens must never be staged in `V4LiquidityVault` (enforced via ModuleRegistry curation).
-3. **Execution Window:** The 2-transaction sequence between extraction and minting should be executed tightly to ensure the extracted collateral is promptly committed.
+3. **Atomic Execution Guarantee:** Because extraction and minting occur atomically in a single taker transaction, uncommitted extracted collateral is never left sitting loose in the router or vault. All collateral transitions instantly from v4 AMM yield into isolated `PositionAccount` custody.

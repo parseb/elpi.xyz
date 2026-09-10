@@ -15,10 +15,8 @@ import {ILPSettlementHook} from "../../src/interfaces/ILPSettlementHook.sol";
 
 contract MockLPRouter {
     function simulateMatchAndMint(V4LiquidityVault vault, address asset, uint256 amount) external {
-        // Router calls extractForMint
+        // Router calls extractForMint which atomically transfers raw ERC-20 directly to router (msg.sender)
         vault.extractForMint(asset, amount);
-        // Router uses the granted allowance to pull the asset
-        TestERC20(asset).transferFrom(address(vault), address(this), amount);
     }
 }
 

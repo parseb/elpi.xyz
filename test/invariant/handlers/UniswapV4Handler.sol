@@ -3,7 +3,6 @@ pragma solidity 0.8.26;
 
 import {Test} from "forge-std/Test.sol";
 import {UniswapV4VenueAdapter} from "../../../src/adapters/UniswapV4VenueAdapter.sol";
-import {OptionSettlementHook} from "../../../src/hooks/OptionSettlementHook.sol";
 import {V4LiquidityVault} from "../../../src/periphery/V4LiquidityVault.sol";
 import {MockPoolManager} from "../../unit/mocks/MockPoolManager.sol";
 import {TestERC20} from "../../unit/mocks/TestERC20.sol";
@@ -11,10 +10,10 @@ import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
 import {SwapParams} from "@uniswap/v4-core/src/types/PoolOperation.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
+import {IHooks} from "@uniswap/v4-core/src/interfaces/IHooks.sol";
 
 contract UniswapV4Handler is Test {
     UniswapV4VenueAdapter public adapter;
-    OptionSettlementHook public hook;
     V4LiquidityVault public vault;
 
     MockPoolManager public poolManager;
@@ -32,7 +31,6 @@ contract UniswapV4Handler is Test {
     constructor() {
         poolManager = new MockPoolManager(MOCK_SWAP_OUTPUT);
         adapter = new UniswapV4VenueAdapter(address(poolManager));
-        hook = new OptionSettlementHook(IPoolManager(address(poolManager)), owner, address(adapter));
 
         tokenA = new TestERC20("TokenA", "TKNA", 18);
         tokenB = new TestERC20("TokenB", "TKNB", 18);
@@ -44,13 +42,13 @@ contract UniswapV4Handler is Test {
             tokenB = temp;
         }
 
-        // Canonical dynamic-fee pool key matching Invariant I4 requirements
+        // Canonical pool key (hooks = address(0), standard fee 3000)
         dummyKey = PoolKey({
             currency0: Currency.wrap(address(tokenA)),
             currency1: Currency.wrap(address(tokenB)),
-            fee: 0x800000, // DYNAMIC_FEE_FLAG required for hook-attached pool
+            fee: 3000,
             tickSpacing: 60,
-            hooks: hook
+            hooks: IHooks(address(0))
         });
 
         vault = new V4LiquidityVault(address(poolManager), dummyKey, -600, 600, owner, lpRouter);
@@ -68,6 +66,8 @@ contract UniswapV4Handler is Test {
     // ─── Actions ───────────────────────────────────────────────────────────
 
     function randomSwap(uint256 amountIn, bool zeroForOne) public {
+        if (msg.sender == address(adapter) || msg.sender == address(poolManager)) return;
+
         amountIn = bound(amountIn, 1, 1_000_000e18);
         address tokenIn = zeroForOne ? address(tokenA) : address(tokenB);
         address tokenOut = zeroForOne ? address(tokenB) : address(tokenA);
@@ -83,19 +83,6 @@ contract UniswapV4Handler is Test {
         } catch {
             // Revert is fine, exploring state space
         }
-        vm.stopPrank();
-    }
-
-    function randomHookCall(uint256 amount) public {
-        amount = bound(amount, 1, type(uint128).max);
-        SwapParams memory params = SwapParams({zeroForOne: true, amountSpecified: int256(amount), sqrtPriceLimitX96: 0});
-
-        // Ensure caller is NOT a known position manager
-        vm.assume(msg.sender != owner && msg.sender != address(adapter));
-        vm.startPrank(msg.sender);
-
-        vm.expectRevert(abi.encodeWithSelector(OptionSettlementHook.InvalidOptionAccount.selector, msg.sender));
-        hook.beforeSwap(msg.sender, dummyKey, params, "");
         vm.stopPrank();
     }
 
@@ -119,7 +106,7 @@ contract UniswapV4Handler is Test {
     }
 
     function randomOnPositionSettled(address caller, uint256 amount) public {
-        vm.assume(caller != address(vault));
+        vm.assume(caller != address(vault) && caller != address(adapter) && caller != address(poolManager));
         amount = bound(amount, 1, 100_000e18);
 
         tokenA.mint(caller, amount);
