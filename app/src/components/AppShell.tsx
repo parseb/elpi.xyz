@@ -27,7 +27,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             href="/"
             className="flex shrink-0 items-center gap-2 font-bold tracking-tight text-white hover:opacity-90 transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00F0FF] focus-visible:rounded-lg"
           >
-            <ElpiLogo size="md" showDomain={true} showBadge={true} badgeText="Uniswap v4" />
+            <ElpiLogo size="md" showDomain={true} showBadge={false} />
           </Link>
           <NavBar />
         </div>

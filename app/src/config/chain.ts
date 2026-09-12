@@ -27,7 +27,6 @@ const rawChainId = Number(process.env.NEXT_PUBLIC_CHAIN_ID || 0);
 
 export const isDev =
   rawTarget === "anvil" ||
-  rawChainId === 8453 ||
   rawChainId === 31337 ||
   (!rawTarget && process.env.NODE_ENV === "development");
 

@@ -14,7 +14,7 @@ export interface ElpiLogoProps {
 export const ElpiLogo: React.FC<ElpiLogoProps> = ({
   size = 'md',
   showDomain = true,
-  showBadge = true,
+  showBadge = false,
   badgeText = 'Uniswap v4',
   className = '',
 }) => {

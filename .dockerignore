@@ -1,0 +1,13 @@
+node_modules
+**/node_modules
+.next
+**/.next
+.git
+out
+cache
+broadcast
+lib/
+artifacts
+artefacts
+local-anvil.json
+*.log
