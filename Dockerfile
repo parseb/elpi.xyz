@@ -19,6 +19,11 @@ RUN npm install
 FROM base AS builder
 WORKDIR /app
 
+# Install CA certificates so forge (a Rust binary) can validate TLS connections,
+# e.g. when fetching the pinned solc release
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
 # Install Foundry binaries in builder to pre-compile contracts
 COPY --from=foundry /usr/local/bin/anvil /usr/local/bin/anvil
 COPY --from=foundry /usr/local/bin/forge /usr/local/bin/forge
