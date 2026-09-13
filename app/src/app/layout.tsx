@@ -3,6 +3,7 @@ import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
 import { AppShell } from "@/components/AppShell";
+import { PartnerSandbox } from "@/components/PartnerSandbox";
 
 const coinbaseSans = Inter({
   variable: "--font-coinbase-sans",
@@ -57,6 +58,7 @@ export default function RootLayout({
         </a>
         <Providers>
           <AppShell>{children}</AppShell>
+          <PartnerSandbox />
         </Providers>
       </body>
     </html>

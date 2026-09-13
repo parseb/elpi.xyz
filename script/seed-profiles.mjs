@@ -9,7 +9,10 @@ import { createRequire } from "module";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT = path.resolve(__dirname, "..");
-const require = createRequire(path.join(ROOT, "app", "package.json"));
+const pkgPath = fs.existsSync(path.join(ROOT, "app", "package.json"))
+  ? path.join(ROOT, "app", "package.json")
+  : path.join(ROOT, "package.json");
+const require = createRequire(pkgPath);
 
 const { privateKeyToAccount } = require("viem/accounts");
 
@@ -399,11 +402,17 @@ async function main() {
     quotes: signedQuotes,
   };
 
-  // Write to app/data/profiles-store.json
-  const storePath = path.join(ROOT, "app", "data", "profiles-store.json");
-  fs.mkdirSync(path.dirname(storePath), { recursive: true });
-  fs.writeFileSync(storePath, JSON.stringify(storeData, null, 2), "utf-8");
-  console.log("✔ Wrote", profileStoreRecords.length, "profiles &", quoteStoreRecords.length, "quotes to", storePath);
+  // Write to configured DATABASE_PATH or local data folders
+  const targetDbPath = process.env.DATABASE_PATH || path.join(ROOT, "data", "profiles-store.json");
+  fs.mkdirSync(path.dirname(targetDbPath), { recursive: true });
+  fs.writeFileSync(targetDbPath, JSON.stringify(storeData, null, 2), "utf-8");
+  console.log("✔ Wrote", profileStoreRecords.length, "profiles &", quoteStoreRecords.length, "quotes to", targetDbPath);
+
+  const fallbackStorePath = path.join(ROOT, "app", "data", "profiles-store.json");
+  if (fallbackStorePath !== targetDbPath) {
+    fs.mkdirSync(path.dirname(fallbackStorePath), { recursive: true });
+    fs.writeFileSync(fallbackStorePath, JSON.stringify(storeData, null, 2), "utf-8");
+  }
 
   // Write to app/data/seed-liquidity.json
   const seedDataPath = path.join(ROOT, "app", "data", "seed-liquidity.json");

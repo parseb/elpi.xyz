@@ -9,12 +9,26 @@ const rawDevChainId = Number(
   31337
 );
 
+export const getDevRpcUrl = () => {
+  if (typeof window !== "undefined") {
+    return process.env.NEXT_PUBLIC_DEV_RPC_URL || "/api/rpc";
+  }
+  return process.env.INTERNAL_RPC_URL || "http://127.0.0.1:8545";
+};
+
 export const anvilLocal = defineChain({
   id: rawDevChainId === 8453 ? 8453 : 31337,
   name: rawDevChainId === 8453 ? "Anvil Local (Base 8453)" : "Anvil Local (31337)",
   nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
   rpcUrls: {
-    default: { http: ["http://127.0.0.1:8545"], webSocket: ["ws://127.0.0.1:8545"] },
+    default: {
+      http: [
+        typeof window !== "undefined"
+          ? (process.env.NEXT_PUBLIC_DEV_RPC_URL || "/api/rpc")
+          : (process.env.INTERNAL_RPC_URL || "http://127.0.0.1:8545"),
+      ],
+      webSocket: ["ws://127.0.0.1:8545"],
+    },
   },
   testnet: true,
 });

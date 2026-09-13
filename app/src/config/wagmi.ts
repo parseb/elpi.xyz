@@ -1,6 +1,6 @@
 import { createConfig, http, fallback } from "wagmi";
 import { coinbaseWallet, injected } from "wagmi/connectors";
-import { anvilLocal, base, baseSepolia, isDev } from "./chain";
+import { anvilLocal, base, baseSepolia, isDev, getDevRpcUrl } from "./chain";
 import { createDevConnectors } from "./devWalletConnector";
  
 // Base is the primary production chain with batched transport to prevent 413 errors.
@@ -14,14 +14,14 @@ export const wagmiConfig = createConfig({
     ...(isDev ? createDevConnectors() : []),
   ],
   transports: {
-    [anvilLocal.id]: http(process.env.NEXT_PUBLIC_DEV_RPC_URL || "http://127.0.0.1:8545", {
+    [anvilLocal.id]: http(getDevRpcUrl(), {
       batch: { batchSize: 50, wait: 16 },
     }),
-    [31337]: http(process.env.NEXT_PUBLIC_DEV_RPC_URL || "http://127.0.0.1:8545", {
+    [31337]: http(getDevRpcUrl(), {
       batch: { batchSize: 50, wait: 16 },
     }),
     [8453]: isDev && anvilLocal.id === 8453
-      ? http(process.env.NEXT_PUBLIC_DEV_RPC_URL || "http://127.0.0.1:8545", {
+      ? http(getDevRpcUrl(), {
           batch: { batchSize: 50, wait: 16 },
         })
       : fallback([

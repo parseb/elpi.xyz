@@ -9,7 +9,7 @@ import { ConnectButton } from "@/components/ConnectButton";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const isDeck = pathname?.startsWith("/deck");
+  const isDeck = pathname?.startsWith("/deck") || pathname?.startsWith("/slide");
 
   if (isDeck) {
     return (

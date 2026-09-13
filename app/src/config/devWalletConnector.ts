@@ -147,7 +147,11 @@ export function createDevAccountConnector(devAcct: DevAccountConfig) {
     },
     async getProvider({ chainId } = {}) {
       const chain = config.chains.find((c) => c.id === chainId) ?? config.chains[0];
-      const rpcUrl = chain.rpcUrls.default.http[0];
+      const rawRpcUrl = chain.rpcUrls.default.http[0];
+      const rpcUrl =
+        typeof window !== "undefined" && rawRpcUrl.startsWith("/")
+          ? `${window.location.origin}${rawRpcUrl}`
+          : rawRpcUrl;
       const publicClient = createPublicClient({ chain, transport: http(rpcUrl) });
       const walletClient = createWalletClient({ account, chain, transport: http(rpcUrl) });
 
