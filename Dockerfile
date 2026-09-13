@@ -29,6 +29,7 @@ COPY foundry.toml remappings.txt ./
 COPY src/ ./src/
 COPY script/ ./script/
 COPY lib/ ./lib/
+COPY artefacts/ ./artefacts/
 RUN forge build
 
 # Build Next.js standalone application targeting devnet Anvil
@@ -53,6 +54,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     jq \
     git \
+    xxd \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
@@ -78,9 +80,11 @@ COPY --from=builder /app/foundry.toml /app/remappings.txt ./
 COPY --from=builder /app/src ./src
 COPY --from=builder /app/script ./script
 COPY --from=builder /app/lib ./lib
+COPY --from=builder /app/artefacts ./artefacts
 COPY --from=builder /app/out ./out
 COPY --from=builder /app/app/package.json ./app/package.json
 COPY --from=builder /app/app/package.json ./package.json
+COPY --from=deps /app/node_modules ./app/node_modules
 
 # Copy Next.js standalone output & static assets
 COPY --from=builder /app/app/public ./public

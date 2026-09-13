@@ -6,8 +6,6 @@ node_modules
 out
 cache
 broadcast
-lib/
 artifacts
-artefacts
 local-anvil.json
 *.log
