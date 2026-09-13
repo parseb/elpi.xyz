@@ -404,26 +404,41 @@ async function main() {
 
   // Write to configured DATABASE_PATH or local data folders
   const targetDbPath = process.env.DATABASE_PATH || path.join(ROOT, "data", "profiles-store.json");
-  fs.mkdirSync(path.dirname(targetDbPath), { recursive: true });
-  fs.writeFileSync(targetDbPath, JSON.stringify(storeData, null, 2), "utf-8");
-  console.log("✔ Wrote", profileStoreRecords.length, "profiles &", quoteStoreRecords.length, "quotes to", targetDbPath);
+  const dbPaths = new Set([
+    targetDbPath,
+    path.join(ROOT, "data", "profiles-store.json"),
+    path.join(ROOT, "app", "data", "profiles-store.json"),
+  ]);
 
-  const fallbackStorePath = path.join(ROOT, "app", "data", "profiles-store.json");
-  if (fallbackStorePath !== targetDbPath) {
-    fs.mkdirSync(path.dirname(fallbackStorePath), { recursive: true });
-    fs.writeFileSync(fallbackStorePath, JSON.stringify(storeData, null, 2), "utf-8");
+  for (const dbPath of dbPaths) {
+    try {
+      fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+      fs.writeFileSync(dbPath, JSON.stringify(storeData, null, 2), "utf-8");
+      console.log("✔ Wrote", profileStoreRecords.length, "profiles &", quoteStoreRecords.length, "quotes to", dbPath);
+    } catch (err) {
+      console.warn("⚠️ Warning writing to", dbPath, err);
+    }
   }
 
-  // Write to app/data/seed-liquidity.json
-  const seedDataPath = path.join(ROOT, "app", "data", "seed-liquidity.json");
-  fs.writeFileSync(seedDataPath, JSON.stringify(seedPayload, null, 2), "utf-8");
-  console.log("✔ Wrote seed payload to", seedDataPath);
+  // Write seed-liquidity.json to candidate paths (local & Docker container standalone)
+  const seedPaths = new Set([
+    path.join(ROOT, "data", "seed-liquidity.json"),
+    path.join(ROOT, "app", "data", "seed-liquidity.json"),
+    path.join(ROOT, "app", "public", "seed-liquidity.json"),
+  ]);
+  if (fs.existsSync(path.join(ROOT, "public"))) {
+    seedPaths.add(path.join(ROOT, "public", "seed-liquidity.json"));
+  }
 
-  // Write to app/public/seed-liquidity.json
-  const publicSeedPath = path.join(ROOT, "app", "public", "seed-liquidity.json");
-  fs.mkdirSync(path.dirname(publicSeedPath), { recursive: true });
-  fs.writeFileSync(publicSeedPath, JSON.stringify(seedPayload, null, 2), "utf-8");
-  console.log("✔ Wrote seed payload to", publicSeedPath);
+  for (const sPath of seedPaths) {
+    try {
+      fs.mkdirSync(path.dirname(sPath), { recursive: true });
+      fs.writeFileSync(sPath, JSON.stringify(seedPayload, null, 2), "utf-8");
+      console.log("✔ Wrote seed payload to", sPath);
+    } catch (err) {
+      console.warn("⚠️ Warning writing to", sPath, err);
+    }
+  }
 
   console.log("🎉 Profile & quote generation complete!");
 }

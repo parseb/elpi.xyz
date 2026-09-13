@@ -7,6 +7,7 @@ import {
 } from "@/lib/backerQuote";
 import { checkRateLimit } from "@/lib/rateLimit";
 import { validateBackerQuote, isQuoteStale, verifyBackerQuoteSignature } from "@/lib/profileValidation";
+import { isDev } from "@/config/chain";
 
 // GET /api/quotes — list backer quotes (filtered by status, collateral, backer)
 // POST /api/quotes — insert a new signed backer quote (strictly validated against EIP-712 & staleness).
@@ -55,8 +56,8 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  // Soft-delete invalid quotes in SQLite
-  if (invalidatedHashes.length > 0) {
+  // Soft-delete invalid quotes in SQLite (disabled in dev to prevent wiping demonstration data)
+  if (invalidatedHashes.length > 0 && !isDev) {
     const updateStmt = db.prepare("UPDATE quotes SET invalidated = 1 WHERE quote_hash = ?");
     const markTx = db.transaction(() => {
       for (const hash of invalidatedHashes) {

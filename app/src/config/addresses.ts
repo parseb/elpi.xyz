@@ -23,10 +23,10 @@ export const addresses = {
   // Uniswap v4 Infrastructure
   poolManager: (process.env.NEXT_PUBLIC_BASE_POOL_MANAGER || localAnvil?.contracts?.poolManager || "0x610178dA211FEF7D417bC0e6FeD39F05609AD788") as Address,
   venueAdapter: (process.env.NEXT_PUBLIC_BASE_VENUE_ADAPTER || localAnvil?.contracts?.venueAdapter || "0xB7f8BC63BbcaD18155201308C8f3540b07f84F5e") as Address, // UniswapV4VenueAdapter
-  settlementVenue: (process.env.NEXT_PUBLIC_BASE_MOCK_VENUE || localAnvil?.contracts?.mockSettlementVenue || "0xB7f8BC63BbcaD18155201308C8f3540b07f84F5e") as Address,
+  settlementVenue: (process.env.NEXT_PUBLIC_BASE_MOCK_VENUE || localAnvil?.contracts?.mockSettlementVenue || "0x5FC8d32690cc91D4c39d9d3abcBD16989F875707") as Address,
   btcSettlementVenue: (process.env.NEXT_PUBLIC_BASE_MOCK_VENUE || localAnvil?.contracts?.mockSettlementVenue || "0x5FC8d32690cc91D4c39d9d3abcBD16989F875707") as Address,
   nvdaSettlementVenue: "0x5FC8d32690cc91D4c39d9d3abcBD16989F875707" as Address,
-  v4LiquidityVault: (process.env.NEXT_PUBLIC_BASE_VAULT || localAnvil?.contracts?.v4LiquidityVault || "0x9A676e781A523b5d0C0e43731313A708CB607508") as Address, // V4LiquidityVault (Stages idle collateral in Uniswap v4)
+  v4LiquidityVault: (process.env.NEXT_PUBLIC_BASE_VAULT || localAnvil?.contracts?.v4LiquidityVault || "0x4ed7c70F96B99c776995fB64377f0d4aB3B0e1C1") as Address, // V4LiquidityVault (Stages idle collateral in Uniswap v4)
   routeId: (process.env.NEXT_PUBLIC_BASE_ROUTE_ID || localAnvil?.uniswapV4?.routeId || "0xc7c4d3ce8b62bf174096deb50284295b1926530a83767d684bf66f5412643385") as Hex,
 
   // Oracles
@@ -35,13 +35,13 @@ export const addresses = {
   nvdaPriceOracle: "0x0000000000000000000000000000000000000000" as Address,
 
   // Protocol Core & Signers
-  authzModule: (process.env.NEXT_PUBLIC_BASE_AUTHZ_MODULE || localAnvil?.contracts?.authzModule || "0x5FbDB2315678afecb367f032d93F642f64180aa3") as Address,
-  conditionArbiter: (process.env.NEXT_PUBLIC_BASE_CONDITION_ARBITER || localAnvil?.contracts?.conditionArbiter || "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0") as Address,
-  positionAccountImplementation: (process.env.NEXT_PUBLIC_BASE_POSITION_ACCOUNT_IMPL || localAnvil?.contracts?.positionAccountImplementation || "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512") as Address,
-  positionManager: (process.env.NEXT_PUBLIC_BASE_POSITION_MANAGER || localAnvil?.contracts?.positionManager || "0x9A676e781A523b5d0C0e43731313A708CB607508") as Address,
-  lpRouter: (process.env.NEXT_PUBLIC_BASE_LP_ROUTER || localAnvil?.contracts?.lpRouter || "0x9A676e781A523b5d0C0e43731313A708CB607508") as Address,
-  expiryCondition: (process.env.NEXT_PUBLIC_BASE_EXPIRY_CONDITION || localAnvil?.contracts?.expiryCondition || "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9") as Address,
-  takerProfitCondition: (process.env.NEXT_PUBLIC_BASE_TAKER_PROFIT_CONDITION || localAnvil?.contracts?.takerProfitCondition || "0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9") as Address,
+  authzModule: (process.env.NEXT_PUBLIC_BASE_AUTHZ_MODULE || localAnvil?.contracts?.authzModule || "0x0B306BF915C4d645ff596e518fAf3F9669b97016") as Address,
+  conditionArbiter: (process.env.NEXT_PUBLIC_BASE_CONDITION_ARBITER || localAnvil?.contracts?.conditionArbiter || "0x959922bE3CAee4b8Cd9a407cc3ac1C251C2007B1") as Address,
+  positionAccountImplementation: (process.env.NEXT_PUBLIC_BASE_POSITION_ACCOUNT_IMPL || localAnvil?.contracts?.positionAccountImplementation || "0x3Aa5ebB10DC797CAC828524e59A333d0A371443c") as Address,
+  positionManager: (process.env.NEXT_PUBLIC_BASE_POSITION_MANAGER || localAnvil?.contracts?.positionManager || "0xc6e7DF5E7b4f2A278906862b61205850344D4e7d") as Address,
+  lpRouter: (process.env.NEXT_PUBLIC_BASE_LP_ROUTER || localAnvil?.contracts?.lpRouter || "0x59b670e9fA9D0A427751Af201D676719a970857b") as Address,
+  expiryCondition: (process.env.NEXT_PUBLIC_BASE_EXPIRY_CONDITION || localAnvil?.contracts?.expiryCondition || "0x9A9f2CCfdE556A7E9Ff0848998Aa4a0CFD8863AE") as Address,
+  takerProfitCondition: (process.env.NEXT_PUBLIC_BASE_TAKER_PROFIT_CONDITION || localAnvil?.contracts?.takerProfitCondition || "0x68B1D87F95878fE05B998F19b66F4baba5De1aed") as Address,
   dustCondition: "0x5FC8d32690cc91D4c39d9d3abcBD16989F875707" as Address,
   neverCondition: "0x0165878A594ca255338adfa4d48449f69242Eb8F" as Address,
   erc6551Registry: (process.env.NEXT_PUBLIC_BASE_ERC6551_REGISTRY || localAnvil?.contracts?.erc6551Registry || "0x000000006551c19487814612e58FE06813775758") as Address,

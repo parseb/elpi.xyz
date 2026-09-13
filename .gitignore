@@ -42,7 +42,9 @@ lerna-debug.log*
 # ==============================================================================
 # Local Devnet & Ephemeral Runtime State
 # ==============================================================================
-local-anvil.json
+# local-anvil.json tracked for turnkey devnet deployments
+!local-anvil.json
+!app/src/config/local-anvil.json
 /data/
 *.log
 

@@ -35,11 +35,13 @@ COPY src/ ./src/
 COPY script/ ./script/
 COPY lib/ ./lib/
 COPY artefacts/ ./artefacts/
+COPY local-anvil.json ./
 RUN forge build
 
 # Build Next.js standalone application targeting devnet Anvil
 COPY --from=deps /app/node_modules ./app/node_modules
 COPY app/ ./app/
+COPY local-anvil.json ./app/src/config/local-anvil.json
 
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NODE_ENV=production
@@ -68,6 +70,9 @@ COPY --from=foundry /usr/local/bin/anvil /usr/local/bin/anvil
 COPY --from=foundry /usr/local/bin/forge /usr/local/bin/forge
 COPY --from=foundry /usr/local/bin/cast /usr/local/bin/cast
 
+# Copy pre-downloaded solc compiler from builder so forge never needs network to compile
+COPY --from=builder /root/.svm /root/.svm
+
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NEXT_PUBLIC_TARGET_CHAIN=anvil
@@ -77,8 +82,9 @@ ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
 ENV DATABASE_PATH="/app/data/profiles-store.json"
 
-# Create persistent data directory for LP profiles & backer quotes
+# Create persistent data directory for LP profiles & backer quotes and copy initial seeds
 RUN mkdir -p /app/data && chmod 777 /app/data
+COPY --from=builder /app/app/data/ /app/data/
 
 # Copy contracts, scripts, and pre-compiled Foundry artifacts
 COPY --from=builder /app/foundry.toml /app/remappings.txt ./
@@ -87,6 +93,8 @@ COPY --from=builder /app/script ./script
 COPY --from=builder /app/lib ./lib
 COPY --from=builder /app/artefacts ./artefacts
 COPY --from=builder /app/out ./out
+COPY --from=builder /app/cache ./cache
+COPY --from=builder /app/local-anvil.json ./local-anvil.json
 COPY --from=builder /app/app/package.json ./app/package.json
 COPY --from=builder /app/app/package.json ./package.json
 COPY --from=deps /app/node_modules ./app/node_modules

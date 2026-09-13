@@ -94,10 +94,29 @@ export default function SlidesDeckPage() {
             )}
           </div>
 
-          {/* Deck Navigation Toolbar & Scroll Prompt */}
-          <div className="w-full max-w-[1320px] flex flex-wrap items-center justify-between gap-3 text-[11px] font-mono text-[#475569] pt-1 pb-1">
-            <nav aria-label="Deck controls" className="flex items-center gap-2 text-xs font-mono text-[#94A3B8]">
+          {/* Invisible spacer balancing header height for vertical centering during window capture */}
+          <div className="w-full max-w-[1320px] h-4 invisible pointer-events-none" aria-hidden="true" />
+        </section>
+
+        {/* ========================================================================= */}
+        {/* 2. PRESENTER CONTROLS & SCRIPT SECTION (HIDDEN SCROLL PART)               */}
+        {/* Requires scrolling down — 100% invisible during slide recording           */}
+        {/* ========================================================================= */}
+        <PresenterScriptSection
+          currentSlide={currentSlide}
+          totalSlides={totalSlides}
+          onSelectSlide={setCurrentSlide}
+          className="w-full"
+        />
+
+        {/* ========================================================================= */}
+        {/* 3. DECK CONTROLS & NAVIGATION FOOTER (MOVED LAST — VISIBLE ON SCROLL)     */}
+        {/* ========================================================================= */}
+        <footer className="w-full border-t border-[#1E2838] bg-[#07090E] py-5 px-4 sm:px-6">
+          <div className="w-full max-w-[1320px] mx-auto flex flex-wrap items-center justify-between gap-4 text-xs font-mono text-[#94A3B8] sm:pr-48">
+            <nav aria-label="Deck controls" className="flex flex-wrap items-center gap-2">
               <button
+                type="button"
                 onClick={goToPrev}
                 disabled={currentSlide <= 1}
                 className="rounded border border-[#1E2838] bg-[#0D121B] px-3 py-1.5 hover:border-[#00F0FF] hover:text-white transition-colors disabled:opacity-40 disabled:hover:border-[#1E2838] cursor-pointer disabled:cursor-not-allowed"
@@ -108,6 +127,7 @@ export default function SlidesDeckPage() {
               <div className="flex items-center gap-1.5 px-1">
                 {Array.from({ length: totalSlides }, (_, i) => i + 1).map((num) => (
                   <button
+                    type="button"
                     key={num}
                     onClick={() => setCurrentSlide(num)}
                     className={`flex h-7 w-7 items-center justify-center rounded-full transition-all cursor-pointer ${
@@ -122,6 +142,7 @@ export default function SlidesDeckPage() {
               </div>
 
               <button
+                type="button"
                 onClick={goToNext}
                 disabled={currentSlide >= totalSlides}
                 className="rounded border border-[#1E2838] bg-[#0D121B] px-3 py-1.5 hover:border-[#00F0FF] hover:text-white transition-colors disabled:opacity-40 disabled:hover:border-[#1E2838] cursor-pointer disabled:cursor-not-allowed"
@@ -129,7 +150,7 @@ export default function SlidesDeckPage() {
                 Next →
               </button>
 
-              <div className="h-4 w-[1px] bg-[#1E2838] mx-1" />
+              <div className="h-4 w-[1px] bg-[#1E2838] mx-1 hidden sm:block" />
 
               <Link
                 href={`/slide${currentSlide}`}
@@ -139,6 +160,7 @@ export default function SlidesDeckPage() {
               </Link>
 
               <button
+                type="button"
                 onClick={() => window.print()}
                 className="rounded border border-[#1E2838] bg-[#0D121B] px-3 py-1.5 hover:border-[#00F0FF] hover:text-white transition-colors cursor-pointer"
                 title="Print or Save All 4 Slides as 16:9 PDF"
@@ -147,26 +169,15 @@ export default function SlidesDeckPage() {
               </button>
             </nav>
 
-            <a
-              href="#presenter-controls"
+            <button
+              type="button"
+              onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
               className="text-[#00F0FF]/80 hover:text-[#00F0FF] transition-colors flex items-center gap-1.5 font-medium cursor-pointer"
             >
-              <span>Scroll down for teleprompter script &amp; rehearsal timing</span>
-              <span className="text-sm">↓</span>
-            </a>
+              <span>↑ Back to slide top</span>
+            </button>
           </div>
-        </section>
-
-        {/* ========================================================================= */}
-        {/* 2. PRESENTER CONTROLS & SCRIPT SECTION (HIDDEN SCROLL PART)               */}
-        {/* Requires scrolling down — 100% invisible during slide recording           */}
-        {/* ========================================================================= */}
-        <PresenterScriptSection
-          currentSlide={currentSlide}
-          totalSlides={totalSlides}
-          onSelectSlide={setCurrentSlide}
-          className="w-full"
-        />
+        </footer>
       </div>
 
       {/* Print Mode: prints all 4 slides each on a dedicated 16:9 page */}

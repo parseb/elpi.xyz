@@ -728,7 +728,7 @@ export function SlideNavToolbar({ currentSlide, totalSlides = 4 }: { currentSlid
   const nextSlide = currentSlide < totalSlides ? currentSlide + 1 : null;
 
   return (
-    <nav aria-label="Slide navigation" className="slide-toolbar flex items-center justify-center gap-3 pt-4 text-xs font-mono text-[#94A3B8]">
+    <nav aria-label="Slide navigation" className="slide-toolbar flex flex-wrap items-center justify-center gap-2 sm:gap-3 text-xs font-mono text-[#94A3B8]">
       {prevSlide ? (
         <Link
           href={`/slide${prevSlide}`}

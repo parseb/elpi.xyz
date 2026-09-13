@@ -64,26 +64,33 @@ export default function Slide3Page() {
           </SlideStage>
         </div>
 
-        {/* Presentation Footer & Scroll Prompt */}
-        <div className="w-full max-w-[1320px] flex flex-wrap items-center justify-between gap-3 text-[11px] font-mono text-[#475569] pt-1 pb-1">
-          <SlideNavToolbar currentSlide={3} />
+          {/* Invisible spacer balancing header height for vertical centering during window capture */}
+          <div className="w-full max-w-[1320px] h-4 invisible pointer-events-none" aria-hidden="true" />
+        </section>
 
-          <a
-            href="#presenter-controls"
-            className="text-[#00F0FF]/80 hover:text-[#00F0FF] transition-colors flex items-center gap-1.5 font-medium cursor-pointer"
-          >
-            <span>Scroll down for teleprompter script &amp; rehearsal timing</span>
-            <span className="text-sm">↓</span>
-          </a>
-        </div>
-      </section>
+        {/* ========================================================================= */}
+        {/* 2. PRESENTER CONTROLS & SCRIPT SECTION (HIDDEN SCROLL PART)               */}
+        {/* Requires scrolling down — 100% invisible during slide recording           */}
+        {/* ========================================================================= */}
+        <PresenterScriptSection currentSlide={3} />
 
-      {/* ========================================================================= */}
-      {/* 2. PRESENTER CONTROLS & SCRIPT SECTION (HIDDEN SCROLL PART)               */}
-      {/* Requires scrolling down — 100% invisible during slide recording           */}
-      {/* ========================================================================= */}
-      <PresenterScriptSection currentSlide={3} />
-    </div>
+        {/* ========================================================================= */}
+        {/* 3. DECK CONTROLS & NAVIGATION FOOTER (MOVED LAST — VISIBLE ON SCROLL)     */}
+        {/* ========================================================================= */}
+        <footer className="w-full border-t border-[#1E2838] bg-[#07090E] py-5 px-4 sm:px-6">
+          <div className="w-full max-w-[1320px] mx-auto flex flex-wrap items-center justify-between gap-4 text-xs font-mono text-[#94A3B8] sm:pr-48">
+            <SlideNavToolbar currentSlide={3} />
+
+            <button
+              type="button"
+              onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+              className="text-[#00F0FF]/80 hover:text-[#00F0FF] transition-colors flex items-center gap-1.5 font-medium cursor-pointer"
+            >
+              <span>↑ Back to slide top</span>
+            </button>
+          </div>
+        </footer>
+      </div>
   );
 }
 

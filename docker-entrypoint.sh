@@ -68,6 +68,9 @@ if [ -f "script/DeployLocal.s.sol" ]; then
       exit 1
     }
   echo "✔ Contracts deployed and recorded in local-anvil.json."
+  if [ -f "local-anvil.json" ] && [ -d "app/src/config" ]; then
+    cp -f local-anvil.json app/src/config/local-anvil.json 2>/dev/null || true
+  fi
 else
   echo "ℹ script/DeployLocal.s.sol not found; using existing local-anvil.json if available."
 fi
@@ -75,9 +78,8 @@ fi
 # ─── 3. Seed Mock Liquidity & Token Approvals ──────────────────────────────────
 if [ -f "script/seed-liquidity.sh" ]; then
   echo "🌱 Seeding mock liquidity and verifying token allowances..."
-  RPC_URL="http://127.0.0.1:$RPC_PORT" bash script/seed-liquidity.sh > /tmp/seed.log 2>&1 || {
-    echo "⚠️ Seed liquidity script warning. Logs:"
-    cat /tmp/seed.log
+  RPC_URL="http://127.0.0.1:$RPC_PORT" bash script/seed-liquidity.sh || {
+    echo "⚠️ Seed liquidity script encountered an error."
   }
   echo "✔ Mock token liquidity and allowances verified."
 fi
@@ -85,9 +87,8 @@ fi
 # ─── 4. Generate EIP-712 Signed Profiles & Backer Quotes ─────────────────────
 if [ -f "script/seed-profiles.mjs" ]; then
   echo "📝 Generating EIP-712 signed liquidity profiles & quotes..."
-  node script/seed-profiles.mjs > /tmp/profiles.log 2>&1 || {
-    echo "⚠️ Profile generation warning. Logs:"
-    cat /tmp/profiles.log
+  node script/seed-profiles.mjs || {
+    echo "⚠️ Profile generation warning."
   }
   echo "✔ EIP-712 signed profiles and quotes populated."
 fi

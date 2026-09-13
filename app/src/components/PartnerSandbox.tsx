@@ -2,12 +2,17 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useConnection, useConnect, useDisconnect } from "wagmi";
 import { isDev, targetChain } from "@/config/chain";
 import { DEVNET_TEST_ACCOUNTS } from "@/config/devWalletConnector";
 import { FlaskIcon, CloseIcon, CheckIcon } from "@/components/icons";
 
 export function PartnerSandbox() {
+  const pathname = usePathname();
+  const isDeckRoute = pathname?.startsWith("/deck") || pathname?.startsWith("/slide");
+  const [hasScrolled, setHasScrolled] = useState(false);
+
   const { address, isConnected } = useConnection();
   const { connect, connectors } = useConnect();
   const { disconnect } = useDisconnect();
@@ -23,6 +28,17 @@ export function PartnerSandbox() {
     isoDate: string;
     wethPrice: string;
   } | null>(null);
+
+  // For slide/deck routes, only show PartnerSandbox once user scrolls down towards the script
+  useEffect(() => {
+    if (!isDeckRoute) return;
+    const handleScroll = () => {
+      setHasScrolled(window.scrollY > 200);
+    };
+    handleScroll();
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, [isDeckRoute]);
 
   // Fetch status on mount or when toggled
   const fetchStatus = async () => {
@@ -51,6 +67,7 @@ export function PartnerSandbox() {
   }, []);
 
   if (!isDev) return null;
+  if (isDeckRoute && !hasScrolled && !isOpen) return null;
 
   const handleTimeTravel = async (preset: "+1h" | "+24h" | "+7d") => {
     setLoading(true);

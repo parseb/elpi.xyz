@@ -7,5 +7,6 @@ out
 cache
 broadcast
 artifacts
-local-anvil.json
+!local-anvil.json
+!app/src/config/local-anvil.json
 *.log
